@@ -126,7 +126,7 @@ export interface Device {
   readouts?(): Readout[];
 
   /** Front-panel interaction routed from the HTML control overlays. */
-  setControl?(id: string, value: number | string): void;
+  setControl?(id: string, value: number | string | boolean): void;
 
   /** V / A / W selector on a multi-mode display. */
   setDisplayMode?(displayId: string, mode: string): void;

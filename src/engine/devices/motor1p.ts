@@ -1,0 +1,169 @@
+/**
+ * M-R/CV · Single-phase asynchronous motor.
+ *
+ * Terminals: Aux2 · Z2 · C · C2 · Run · U2 · PE
+ * Main winding (Run-U2) plus an auxiliary winding with run capacitor.
+ */
+
+import { Thermal } from '../thermal.js';
+import type { Machine, Mna, NetOf, Readout, Solution } from '../types.js';
+import { uid } from '../uid.js';
+import { netDiff, stampConductance, stampNorton } from './util.js';
+import { radOf, rpmOf } from './dc.js';
+
+const TWO_PI = Math.PI * 2;
+
+export interface Motor1POptions {
+  id?: string;
+  label?: string;
+  Rmain?: number;
+  Raux?: number;
+  C?: number;
+  p?: number;
+  f?: number;
+  Vrated?: number;
+  Irated?: number;
+  Nrated?: number;
+  J?: number;
+}
+
+export class Motor1P implements Machine {
+  readonly id: string;
+  readonly type = 'motor_1p';
+  readonly label: string;
+  readonly terminals = { Aux2: 1, Z2: 1, C: 1, C2: 1, Run: 1, U2: 1, PE: 1 };
+
+  /**
+   * Winding resistances.
+   *
+   * 230 V / 3.6 A rated means the two windings in parallel must present about
+   * 64 ohm, so a 100 ohm run winding alongside a 180 ohm auxiliary gives
+   * 64.3 ohm and 3.58 A at 230 V without the capacitor - matching the 3.5 A the
+   * reference observation records for the no-capacitor case. The earlier
+   * 52 / 95 ohm pair presented 33.6 ohm and drew 6.8 A, tripping the
+   * variable-AC breaker at 134 V before the motor reached rated voltage.
+   */
+  Rmain: number;
+  Raux: number;
+  C: number;
+  p: number;
+  f: number;
+  Vrated: number;
+  Irated: number;
+  Nrated: number;
+  J: number;
+
+  omega = 0;
+  slip = 1;
+  Irun = 0;
+  Iaux = 0;
+  Te = 0;
+  primeRpm = 0;
+  _coupled = false;
+
+  readonly thermal = new Thermal({ C: 900, Rth: 2, Tmax: 130, Tburn: 250 });
+
+  readonly mainPair: [string, string] = ['Run', 'U2'];
+  readonly auxPair: [string, string] = ['Aux2', 'Z2'];
+
+  constructor(opts: Motor1POptions = {}) {
+    this.id = opts.id ?? uid('m1');
+    this.label = opts.label ?? '1-phase Async Motor M-R/CV';
+    this.Rmain = opts.Rmain ?? 100;
+    this.Raux = opts.Raux ?? 180;
+    this.C = opts.C ?? 12.5e-6;
+    this.p = opts.p ?? 2;
+    this.f = opts.f ?? 50;
+    this.Vrated = opts.Vrated ?? 230;
+    this.Irated = opts.Irated ?? 3.6;
+    this.Nrated = opts.Nrated ?? 2850;
+    this.J = opts.J ?? 0.015;
+  }
+
+  get Nsync(): number {
+    return (120 * this.f) / this.p;
+  }
+
+  stamp(mna: Mna, netOf: NetOf): void {
+    if (this.thermal.dead) return;
+
+    const [ma, mb] = this.mainPair;
+    const na = netOf(this.id, ma);
+    const nb = netOf(this.id, mb);
+    if (na !== undefined && nb !== undefined && na !== nb) {
+      const E = 0.4 * this.slip * this.omega;
+      stampNorton(mna, na, nb, 1 / this.Rmain, E, -1);
+    }
+
+    const [aa, ab] = this.auxPair;
+    stampConductance(mna, netOf(this.id, aa), netOf(this.id, ab), 1 / this.Raux);
+
+    // Run capacitor. Reactance magnitude 1/(2 pi f C) sets the auxiliary
+    // current; modelled as a conductance of that magnitude.
+    stampConductance(
+      mna,
+      netOf(this.id, 'C'),
+      netOf(this.id, 'C2'),
+      TWO_PI * this.f * this.C
+    );
+  }
+
+  update(dt: number, sol: Solution): void {
+    if (this.thermal.dead) {
+      this.omega = 0;
+      this.Irun = 0;
+      this.Iaux = 0;
+      return;
+    }
+
+    this.Irun = netDiff(sol, this.id, this.mainPair[0], this.mainPair[1]) / this.Rmain;
+    this.Iaux = netDiff(sol, this.id, this.auxPair[0], this.auxPair[1]) / this.Raux;
+
+    const Itot = Math.abs(this.Irun) + 0.5 * Math.abs(this.Iaux);
+
+    if (Itot > 0.05) {
+      const NsyncRad = radOf(this.Nsync);
+      const slipNow = (NsyncRad - this.omega) / NsyncRad;
+      this.slip = Math.max(-0.5, Math.min(1, slipNow));
+      const s = Math.max(0.03, Math.abs(this.slip));
+      const pull = (Itot * Itot * 0.4) / s;
+      this.Te = Math.sign(this.slip || 1) * Math.min(pull, 20);
+    } else {
+      this.Te = 0;
+      this.slip = 1;
+    }
+
+    if (!this._coupled && this.primeRpm <= 0) {
+      const friction = 0.002 * Math.sign(this.omega) + 0.0006 * this.omega;
+      this.omega += ((this.Te - friction) / this.J) * dt;
+      if (this.omega < 0) this.omega = 0;
+    }
+    if (!Number.isFinite(this.omega)) this.omega = 0;
+
+    const NmaxRad = radOf(this.Nsync * 1.3);
+    if (this.omega > NmaxRad) this.omega = NmaxRad;
+
+    this.thermal.step(
+      dt,
+      this.Irun * this.Irun * this.Rmain +
+        this.Iaux * this.Iaux * this.Raux +
+        Math.abs(this.omega) * 0.008
+    );
+    if (Itot > this.Irated * 3) {
+      this.thermal.damage += dt * (Itot - this.Irated * 3) * 0.0016;
+    }
+  }
+
+  readouts(): Readout[] {
+    return [
+      { name: 'N', value: rpmOf(this.omega), unit: 'rpm' },
+      { name: 's', value: this.slip, unit: '' },
+      { name: 'Irun', value: Math.abs(this.Irun), unit: 'A' },
+      { name: 'Iaux', value: Math.abs(this.Iaux), unit: 'A' },
+      { name: 'C', value: this.C * 1e6, unit: 'uF' },
+      { name: 'T', value: this.Te, unit: 'N m' },
+      { name: 'Tw', value: this.thermal.T, unit: 'C', warn: this.thermal.T > this.thermal.Tmax },
+      { name: 'st', value: this.thermal.dead ? 'DEAD' : this.thermal.T > 100 ? 'HOT' : 'OK', unit: '' }
+    ];
+  }
+}

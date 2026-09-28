@@ -10,9 +10,10 @@
  *   · The solver becomes testable. You cannot assert on a random walk.
  *   · Two students on different machines can compare benches bit-for-bit.
  *
- * The previous build called `Math.random()` from inside `readouts()`, which
- * meant the rack LCD and the sidebar showed *different* values for the same
- * meter. One stream, sampled once per frame, fixes that at the root.
+ * The previous build drew meter noise from `Math.random()` inside each
+ * device's `update()`. That meant two students running the same bench, or one
+ * student re-running an experiment, got different recorded numbers — which is
+ * fine for a game and useless for a lab report.
  */
 
 /** Seed used when the caller does not care. Arbitrary but fixed. */

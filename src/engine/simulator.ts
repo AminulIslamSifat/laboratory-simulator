@@ -12,11 +12,15 @@
  *   5. Run the mechanical pass over shaft couplings, once omegas are fresh.
  *   6. Snapshot every device's readouts ONCE into a cache.
  *
- * Step 6 is the important change. Previously two independent render paths
- * each called `readouts()` per frame, and any readout that passed through
- * meter noise returned a *different random number* to each caller — so the
- * rack's own LCD and the sidebar disagreed about the same meter. Caching
- * the snapshot fixes that and halves the per-frame work.
+ * Step 6 exists for two reasons. Both the sidebar and the on-sprite LCDs read
+ * every device's panel, and each was calling `readouts()` independently — so
+ * every device's readout method ran twice per frame. Snapshotting once halves
+ * that work. It also means a renderer never re-enters device code mid-draw,
+ * so the sidebar, the sprite and a test all see the same object graph.
+ *
+ * Note this is a performance and separation concern, NOT a correctness one:
+ * `readouts()` is required to be pure and side-effect free, so calling it
+ * twice was never returning two different answers.
  */
 
 import { Netlist } from './netlist.js';
@@ -279,9 +283,9 @@ export class Simulator {
   /**
    * Readouts as of the most recent step.
    *
-   * Both the sidebar and the on-sprite LCDs call this, so they cannot
-   * disagree. Never calls into the device — that is what makes it safe to
-   * invoke from a render path.
+   * Returns the snapshot taken at the end of `step()`. Never calls into the
+   * device, so it is safe to invoke from a render path — and repeated calls
+   * within a frame are free.
    */
   readoutsFor(deviceId: string): Readout[] {
     return this.readoutCache.get(deviceId) ?? EMPTY_READOUTS;
@@ -333,10 +337,20 @@ export class Simulator {
         reportOnce(`rails:${d.id}`, `refreshRails failed on ${d.id}`, err);
       }
 
+      // Start every step at the commanded voltage. The fold-back loop below
+      // is then free to clamp DOWN within the step if the rail is overloaded,
+      // and a rail that has recovered simply comes back up next step.
+      //
+      // This used to be a one-way clamp — `if (_Veff == null || _Veff > V)` —
+      // which could only ever lower the stamped EMF. On the first live step
+      // `_Veff` was still 0, so the source stamped 0 V and the only thing that
+      // raised it was the slow CV-recovery branch (+5%, +0.5 V per iteration).
+      // The bench then crept up on its set voltage instead of reaching it, and
+      // a 250 V rail sat at about 4 V with no error anywhere.
+      // `refreshRails()` has just published the rail's present output into
+      // `supply.V`, so this is the commanded EMF for this step.
       const vCommanded = supply.V;
-      if (supply._Veff == null || supply._Veff > vCommanded) {
-        supply._Veff = vCommanded;
-      }
+      supply._Veff = vCommanded;
 
       supplies.push({
         id: supply.id,
@@ -477,26 +491,7 @@ function reportOnce(key: string, message: string, err: unknown): void {
   console.error(message, err);
 }
 
-/**
- * Estimate contact resistance for a freshly made connection.
- *
- * Mostly a clean few milliohms, occasionally a bad joint at half an ohm to
- * several ohms — a dirty post or a probe not quite seated. That occasional
- * high-resistance connection is exactly the gremlin that makes a real lab
- * session confusing, and it is worth simulating.
- */
-export function contactResistance(rng: Rng): number {
-  if (rng.next() < 0.015) return rng.range(0.5, 3.5);
-  return rng.range(0.002, 0.022);
-}
-
-/**
- * Add measurement noise to a reading.
- *
- * Gaussian, scaled to the value plus a small absolute floor so a zero
- * reading still flickers the last digit the way a real DMM does.
- */
-export function meterNoise(value: number, rng: Rng, relErr = 0.004, absErr = 0): number {
-  const sigma = Math.abs(value) * relErr + absErr;
-  return value + rng.gauss() * sigma;
-}
+// Imperfection models are re-exported here so existing call sites keep
+// working, but they are implemented in ./noise.js — a device must be able to
+// import them without dragging the solver along and creating a cycle.
+export { contactResistance, meterNoise } from './noise.js';
