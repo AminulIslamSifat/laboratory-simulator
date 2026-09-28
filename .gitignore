@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.editor_tools_backups/
+*.bak
+*.before_*
+.DS_Store

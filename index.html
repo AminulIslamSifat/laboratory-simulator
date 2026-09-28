@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+<meta charset='UTF-8' />
+<meta name='viewport' content='width=device-width, initial-scale=1.0' />
+<title>EEE-2152 · Electrical Machines Laboratory</title>
+<link rel='stylesheet' href='assets/style.css?v=18' />
+<script src='https://unpkg.com/lucide@latest/dist/umd/lucide.min.js'></script>
+</head>
+<body>
+
+<!-- ═══════════════ BOOT SCREEN ═══════════════ -->
+<div class='boot' id='boot'>
+  <div class='boot-inner'>
+    <div class='boot-crest'><i data-lucide='zap' class='lucide-icon'></i></div>
+    <h1 class='boot-title'>Heaven's Light is Our Guide</h1>
+    <p class='boot-sub'>Rajshahi University of Engineering &amp; Technology</p>
+    <p class='boot-course'>EEE-2152 · Electrical Drives &amp; Instrumentation Sessional</p>
+    <div class='boot-bar'><div class='boot-fill' id='boot-fill'></div></div>
+    <p class='boot-status' id='boot-status'>Initialising solver…</p>
+  </div>
+</div>
+
+<!-- ═══════════════ MAIN MENU ═══════════════ -->
+<div class='menu hidden' id='menu'>
+  <div class='menu-bg'></div>
+  <div class='menu-topbar'>
+    <div class='menu-brand'>
+      <span class='menu-mark'><i data-lucide='zap' class='lucide-icon sm'></i></span>
+      <div>
+        <strong>EEE-2152</strong>
+        <small>Electrical Machines Laboratory</small>
+      </div>
+    </div>
+    <button class='kebab-btn' id='menu-kebab' title='Reference material'><i data-lucide='more-vertical' class='lucide-icon sm'></i></button>
+  </div>
+
+  <div class='menu-hero'>
+    <h2>Electrical Machines<br/>Laboratory</h2>
+    <p>An interactive bench simulator. Place real equipment, wire it up, energise, and read live measurements from the solver.</p>
+  </div>
+
+  <div class='menu-actions'>
+    <button class='menu-card primary' id='go-lab'>
+      <span class='mc-ico'><i data-lucide='flask-conical' class='lucide-icon'></i></span>
+      <span class='mc-txt'><strong>Enter Laboratory</strong><small>Empty bench · free wiring</small></span>
+    </button>
+    <button class='menu-card' id='go-presets'>
+      <span class='mc-ico'><i data-lucide='clipboard-list' class='lucide-icon'></i></span>
+      <span class='mc-txt'><strong>Load an Experiment</strong><small>Pre-wired setups · exp 1–6</small></span>
+    </button>
+    <button class='menu-card' id='go-reference'>
+      <span class='mc-ico'><i data-lucide='book-open' class='lucide-icon'></i></span>
+      <span class='mc-txt'><strong>Reference Material</strong><small>Nameplates · procedures · theory</small></span>
+    </button>
+  </div>
+
+  <div class='menu-foot'>
+    <span>Aminul Islam Sifat · Roll 2403123 · Sec C</span>
+    <span>Dept. of CSE, RUET</span>
+  </div>
+</div>
+
+<!-- ═══════════════ LABORATORY ═══════════════ -->
+<div class='lab hidden' id='lab'>
+  <header class='lab-bar'>
+    <button class='lab-back' id='lab-back' title='Back to menu'><i data-lucide='arrow-left' class='lucide-icon sm'></i></button>
+    <div class='lab-title' id='lab-title'>Laboratory · Empty Bench</div>
+    <div class='lab-run-group'>
+      <button class='lab-btn run' id='lab-run'><i data-lucide='play' class='lucide-icon xs'></i> Run</button>
+      <button class='lab-btn clear' id='lab-clear'><i data-lucide='rotate-ccw' class='lucide-icon xs'></i> Clear</button>
+    </div>
+    <button class='kebab-btn' id='lab-kebab' title='Menu'><i data-lucide='more-vertical' class='lucide-icon sm'></i></button>
+  </header>
+
+  <div class='lab-body'>
+    <aside class='lab-palette' id='lab-palette'>
+      <div class='pal-tabs'>
+        <button class='pal-tab active' data-tab='equipment'>Equipment</button>
+        <button class='pal-tab' data-tab='presets'>Presets</button>
+      </div>
+      <div class='pal-panel active' id='panel-equipment'>
+        <div class='pal-list' id='pal-list'></div>
+      </div>
+      <div class='pal-panel' id='panel-presets'>
+        <div class='pal-list' id='pal-presets'></div>
+      </div>
+    </aside>
+
+    <div class='lab-stage'>
+      <div class='bench' id='bench'>
+        <div class='bench-back'></div>
+        <div class='bench-surface' id='bench-surface'>
+          <div class='bench-world' id='bench-world'>
+            <svg class='wire-layer' id='wire-layer'></svg>
+            <svg class='smoke-layer' id='smoke-layer'></svg>
+          </div>
+          <div class='bench-hint' id='bench-hint'>
+            <i data-lucide='mouse-pointer-2' class='lucide-icon bench-hint-ico'></i>
+            <span>drag empty space to pan · scroll to zoom · double-click empty space to fit</span>
+          </div>
+        </div>
+        <div class='bench-front'></div>
+      </div>
+    </div>
+
+    <aside class='lab-meters' id='lab-meters'>
+      <div class='meter-head'>Live Meters</div>
+      <div class='meter-list' id='meter-list'>
+        <p class='meter-empty'>No devices on the bench yet.</p>
+      </div>
+      <div class='meter-foot' id='lab-status'>Bench ready · add equipment from the left</div>
+    </aside>
+  </div>
+</div>
+
+<!-- ═══════════════ KEBAB MENU ═══════════════ -->
+<div class='kebab hidden' id='kebab'>
+  <div class='kebab-card'>
+    <button data-k='reference'><i data-lucide='book-open' class='lucide-icon xs'></i> Reference Material</button>
+    <button data-k='presets'><i data-lucide='clipboard-list' class='lucide-icon xs'></i> Load Experiment</button>
+    <button data-k='save'><i data-lucide='save' class='lucide-icon xs'></i> Save Bench</button>
+    <button data-k='load'><i data-lucide='folder-open' class='lucide-icon xs'></i> Load Bench</button>
+    <div class='kebab-sep'></div>
+    <button data-k='about'><i data-lucide='info' class='lucide-icon xs'></i> About</button>
+  </div>
+</div>
+
+<!-- ═══════════════ REFERENCE DRAWER ═══════════════ -->
+<div class='drawer hidden' id='drawer'>
+  <div class='drawer-head'>
+    <span id='drawer-title'>Reference Material</span>
+    <button class='drawer-close' id='drawer-close'><i data-lucide='x' class='lucide-icon xs'></i></button>
+  </div>
+  <div class='drawer-body' id='drawer-body'></div>
+</div>
+
+<div class='toast hidden' id='toast'></div>
+
+<script src='js/engine/core.js?v=18'></script>
+<script src='js/engine/devices.js?v=18'></script>
+<script src='js/lab/sprites.js?v=18'></script>
+<script src='js/lab/wiring.js?v=18'></script>
+<script src='js/lab/lab.js?v=18'></script>
+<script src='js/experiments/index.js?v=18'></script>
+<script src='js/reference.js?v=18'></script>
+<script src='js/app.js?v=18'></script>
+<script>lucide.createIcons();</script>
+</body>
+</html>
