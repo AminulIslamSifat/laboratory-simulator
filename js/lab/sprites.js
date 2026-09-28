@@ -1761,9 +1761,18 @@ function spriteSinglePhaseTransformer() {
   s += '<line x1="512" y1="210" x2="512" y2="690" stroke="#111" stroke-width="9"/>';
   s += '<line x1="530" y1="210" x2="530" y2="690" stroke="#111" stroke-width="9"/>';
 
-  // ---- primary + secondary windings: full panel height, as printed ----
+  // ---- primary winding ----
   s += '<path d="' + coil(400, 210, 690, 24, 12) + '" fill="none" stroke="#111" stroke-width="4"/>';
-  s += '<path d="' + coil(636, 195, 705, 30, 13) + '" fill="none" stroke="#111" stroke-width="4.5"/>';
+
+  // ---- secondary: TWO separate windings on the shared core ----
+  // 2U1…2U2 and 3U1…3U2 are different coils, not one long string. They were
+  // drawn as a single coil from y=195 to y=705, which made the panel read as
+  // one continuous winding and made it look like 2U2 fed straight into 3U1.
+  // They are independent secondaries — a 200 V section and a 230 V section —
+  // which you series up or use on their own. The gap between them is the
+  // whole point: it is what tells a student these are two windings.
+  s += '<path d="' + coil(636, 170, 445, 30, 8) + '" fill="none" stroke="#111" stroke-width="4.5"/>';
+  s += '<path d="' + coil(636, 550, 700, 30, 5) + '" fill="none" stroke="#111" stroke-width="4.5"/>';
 
   // ---- primary wiring ----
   // P230 (top red, y=230) -> coil top
@@ -1774,13 +1783,12 @@ function spriteSinglePhaseTransformer() {
   s += '<line x1="330" y1="612" x2="366" y2="648" stroke="#111" stroke-width="2.4"/>';
   s += '<circle cx="372" cy="654" r="6" fill="#f4f5ef" stroke="#111" stroke-width="2.4"/>';
   s += '<path d="M 372 660 L 372 690 L 400 690" fill="none" stroke="#111" stroke-width="3"/>';
-  // PE (yellow, y=450) bonds the CORE, not the winding. On a real transformer
-  // the protective conductor lands on the laminations/frame so a primary-to-
-  // core insulation failure trips the breaker instead of putting mains on the
-  // chassis. The earlier version drew the line to x=388 and stopped in open
-  // air — near the winding but touching neither it nor the core, so it looked
-  // connected without being connected to anything.
-  s += '<path d="M 166 450 L 512 450" fill="none" stroke="#111" stroke-width="3"/>';
+  // PE (yellow, y=450) gets NO wire. The earth symbol drawn under the jack is
+  // the whole indication — that is how the real panel prints it, and it is
+  // what the model does: PE is not a node on any winding. The previous version
+  // drew a line from the jack toward the core, which crossed the primary
+  // winding on the way and implied an electrical connection that does not
+  // exist. Ground has no connection to the coil, and the drawing now says so.
   // 230V sits INSIDE the primary coil loop
   s += txt(340, 405, '230V', { size: 22, weight: '700', anchor: 'middle' });
 
@@ -1800,11 +1808,20 @@ function spriteSinglePhaseTransformer() {
 
   // ---- printed tap voltages, sitting in the gap between the winding and
   //      the jack columns (was overlapping the outer jack row at x=755) ----
-  s += txt(700, 200, '115V', { size: 22, weight: '700', anchor: 'middle' });
-  s += txt(700, 305, '115V', { size: 22, weight: '700', anchor: 'middle' });
-  s += txt(700, 400, '200V', { size: 22, weight: '700', anchor: 'middle' });
-  s += txt(700, 505, '147V', { size: 22, weight: '700', anchor: 'middle' });
-  s += txt(700, 690, '53V',  { size: 22, weight: '700', anchor: 'middle' });
+  // Section voltages, each sitting between the two taps it spans.
+  //
+  // These carry the MODEL's values (Transformer.sections in
+  // src/engine/devices/transformer.ts), not the ones printed on the reference
+  // photo. The photo reads 53 / 147 / 200 down the 2U coil, which would make
+  // 2U1–2U2 a 400 V winding and the pair 630 V in series. The model treats it
+  // as a 200 V winding (53 / 94 / 53) and the 3U as 230 V (115 / 115), which
+  // is what the 400 V / 230 V nameplate actually supports. Panel and solver
+  // have to agree or a student measures one number and reads another.
+  s += txt(700, 220, '53V',  { size: 22, weight: '700', anchor: 'middle' });
+  s += txt(700, 317, '94V',  { size: 22, weight: '700', anchor: 'middle' });
+  s += txt(700, 405, '53V',  { size: 22, weight: '700', anchor: 'middle' });
+  s += txt(700, 590, '115V', { size: 22, weight: '700', anchor: 'middle' });
+  s += txt(700, 665, '115V', { size: 22, weight: '700', anchor: 'middle' });
 
   // ---- earth symbol, directly below the YELLOW earth jack ----
   s += '<g stroke="#111" stroke-width="2.4" fill="none">' +
