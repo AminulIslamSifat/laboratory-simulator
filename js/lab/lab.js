@@ -251,7 +251,20 @@ Lab.prototype.place = function (kind, x, y) {
     x = 40 + (n % 4) * 260;
     y = 30 + Math.floor(n / 4) * 220;
   }
-  const entry = { id: id, kind: kind, model: dev, x: x, y: y, w: reg.layout.w, h: reg.layout.h };
+  const entry = {
+    id: id,
+    kind: kind,
+    model: dev,
+    x: x,
+    y: y,
+    w: reg.layout.w,
+    h: reg.layout.h,
+    // Rotation in degrees, clockwise: 0 / 90 / 180 / 270. Not an arbitrary
+    // angle — the panel art is axis-aligned and a 37° motor just looks broken.
+    // `w`/`h` stay the NATIVE (unrotated) size; the visual rotation is a CSS
+    // transform and the wire layer compensates in pointOf().
+    rot: 0
+  };
   this.devices.push(entry);
   this.netlist.addDevice(dev);
   dev._labId = id;
@@ -361,8 +374,47 @@ Lab.prototype._renderDevice = function (entry) {
   this.world.appendChild(el);
   this._bindDrag(el, entry);
   this._bindControls(el, entry);
+  this._applyRotation(el, entry);
   self._updateSpriteReadouts();
   return el;
+};
+
+/**
+ * Apply a device's rotation as a CSS transform about its own centre.
+ *
+ * Rotating about the centre (not the top-left) is what keeps a device from
+ * jumping sideways when you rotate it: the layout box keeps its native w x h
+ * and its top-left stays put, so the centre is a fixed point and the panel
+ * pivots in place.
+ *
+ * `data-rot` on the element is the single source of truth for the wire layer.
+ * Wiring.pointOf() reads it back and rotates the terminal coordinate by the
+ * same angle, which is what keeps wires attached to their jacks instead of to
+ * where the jacks used to be.
+ */
+Lab.prototype._applyRotation = function (el, entry) {
+  entry.rot = (((entry.rot || 0) % 360) + 360) % 360;
+  el.dataset.rot = String(entry.rot);
+  el.style.transformOrigin = '50% 50%';
+  el.style.transform = entry.rot ? 'rotate(' + entry.rot + 'deg)' : '';
+};
+
+/** Rotate one device by `delta` degrees (default +90, clockwise). */
+Lab.prototype.rotateDevice = function (devId, delta) {
+  const entry = this.devices.find(function (d) { return d.id === devId; });
+  if (!entry) return;
+
+  const before = entry.rot || 0;
+  entry.rot = (((before + (delta == null ? 90 : delta)) % 360) + 360) % 360;
+
+  const el = this.world.querySelector('.device[data-id="' + devId + '"]');
+  if (el) this._applyRotation(el, entry);
+
+  // Wires are drawn in world space from pointOf(), so they have to be redrawn
+  // the instant the terminal coordinates move. Forgetting this is what makes
+  // a rotated device's wires hang in mid-air.
+  this.wiring.render();
+  this._toast('Rotated \u00b7 ' + entry.rot + '\u00b0', '');
 };
 
 /* ============ panel controls ============ */
@@ -668,6 +720,19 @@ Lab.prototype._showDeviceCtx = function (x, y, devId) {
     { icon: 'copy', label: 'Duplicate', key: 'Ctrl+D', action: function () { self.duplicateDevice(devId); } },
     { icon: 'info', label: reg.label + ' · ' + reg.model, action: function () { self._showDeviceInfo(devId); } },
     { sep: true },
+    { icon: 'rotate-cw', label: 'Rotate 90° Right', key: 'R', action: function () { self.rotateDevice(devId, 90); } },
+    { icon: 'rotate-ccw', label: 'Rotate 90° Left', action: function () { self.rotateDevice(devId, -90); } },
+    { icon: 'undo-2', label: 'Reset Rotation', action: function () {
+      const e2 = self.devices.find(function (d) { return d.id === devId; });
+      if (!e2) return;
+      const was = e2.rot || 0;
+      e2.rot = 0;
+      const el = self.world.querySelector('.device[data-id="' + devId + '"]');
+      if (el) self._applyRotation(el, e2);
+      self.wiring.render();
+      if (was) self._toast('Rotation reset', '');
+    } },
+    { sep: true },
     { icon: 'trash-2', label: 'Delete Device', key: 'Del', danger: true, action: function () { self.removeDeviceWithUndo(devId); } }
   ]);
 };
@@ -716,6 +781,13 @@ Lab.prototype._bindKeyboard = function () {
     } else if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       self.undo();
+    } else if ((e.key === 'r' || e.key === 'R') && !e.ctrlKey && !e.metaKey) {
+      // Rotate the selection a quarter turn. Shift+R goes the other way, so
+      // you can back out of an overshoot without three more presses.
+      if (self.selectedId && !e.target.closest('input, textarea')) {
+        e.preventDefault();
+        self.rotateDevice(self.selectedId, e.shiftKey ? -90 : 90);
+      }
     } else if (e.key === 'Escape') {
       self._closeCtx();
       self.deselectAll();

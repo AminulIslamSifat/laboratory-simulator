@@ -165,6 +165,28 @@ Wiring.prototype.pointOf = function (devId, term) {
   let termY = parseFloat(t.dataset.cy);
   if (!isFinite(termX)) termX = t.offsetLeft + t.offsetWidth / 2;
   if (!isFinite(termY)) termY = t.offsetTop + t.offsetHeight / 2;
+
+  // A rotated device is drawn with a CSS transform, so the DOM does NOT tell
+  // us where its terminals actually are. Rotate the recorded coordinate by the
+  // same angle about the device centre and the wire lands on the jack again.
+  //
+  // The rotation is about the centre, matching `transform-origin: 50% 50%` in
+  // _applyRotation, so the centre is a fixed point and the maths is a plain
+  // 2D rotation of the offset from it. Positive degrees rotate clockwise,
+  // which is what CSS does, because the y axis points down.
+  const rot = parseFloat(dev.dataset.rot) || 0;
+  if (rot) {
+    const w = parseFloat(dev.style.width) || 0;
+    const h = parseFloat(dev.style.height) || 0;
+    const dx = termX - w / 2;
+    const dy = termY - h / 2;
+    const rad = rot * Math.PI / 180;
+    const c = Math.cos(rad);
+    const s = Math.sin(rad);
+    termX = w / 2 + (dx * c - dy * s);
+    termY = h / 2 + (dx * s + dy * c);
+  }
+
   return {
     x: devX + termX,
     y: devY + termY

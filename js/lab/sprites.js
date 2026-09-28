@@ -1774,8 +1774,13 @@ function spriteSinglePhaseTransformer() {
   s += '<line x1="330" y1="612" x2="366" y2="648" stroke="#111" stroke-width="2.4"/>';
   s += '<circle cx="372" cy="654" r="6" fill="#f4f5ef" stroke="#111" stroke-width="2.4"/>';
   s += '<path d="M 372 660 L 372 690 L 400 690" fill="none" stroke="#111" stroke-width="3"/>';
-  // PE (yellow, y=450) connects down to the winding
-  s += '<path d="M 166 450 L 388 450 L 388 470" fill="none" stroke="#111" stroke-width="3"/>';
+  // PE (yellow, y=450) bonds the CORE, not the winding. On a real transformer
+  // the protective conductor lands on the laminations/frame so a primary-to-
+  // core insulation failure trips the breaker instead of putting mains on the
+  // chassis. The earlier version drew the line to x=388 and stopped in open
+  // air — near the winding but touching neither it nor the core, so it looked
+  // connected without being connected to anything.
+  s += '<path d="M 166 450 L 512 450" fill="none" stroke="#111" stroke-width="3"/>';
   // 230V sits INSIDE the primary coil loop
   s += txt(340, 405, '230V', { size: 22, weight: '700', anchor: 'middle' });
 
@@ -1897,14 +1902,21 @@ const EQUIPMENT = {
     sprite: spriteAsyncMotor3P,
     layout: { w: 360, h: 479, terms: [
       { k: 'PE', x: 139, y: 159 },
-      { k: 'A2', x: 131, y: 270 },
+      // 9 jacks, 3x3 grid. Column x: 131 / 162 / 193. Row y: 270 / 299 / 329.
+      //
+      // B1 and B2 used to sit at (42.2, 104.0) and (77.1, 104.0) — those are
+      // the TRANSFORMER's jack coordinates, pasted in by mistake. They fell
+      // outside this panel entirely, so two terminals floated off the top-left
+      // corner and no wire could reach them. They belong on the grid like
+      // everything else.
+      { k: 'W2', x: 131, y: 270 },
       { k: 'U2', x: 162, y: 270 },
       { k: 'W1', x: 193, y: 270 },
-      { k: 'A3', x: 131, y: 299 },
-      { k: 'W2', x: 162, y: 299 },
-      { k: 'B1',   x: 42.2, y: 104.0 },
-      { k: 'D1', x: 131, y: 329 },
-      { k: 'B2',   x: 77.1, y: 104.0 },
+      { k: 'A2', x: 131, y: 299 },
+      { k: 'A3', x: 162, y: 299 },
+      { k: 'D1', x: 193, y: 299 },
+      { k: 'B1', x: 131, y: 329 },
+      { k: 'B2', x: 162, y: 329 },
       { k: 'C2', x: 193, y: 329 },
       // Shaft port on the painted flange at device(358,273).
       { k: 'SHAFT', x: 358, y: 273, mech: 1 }

@@ -245,7 +245,7 @@ function saveBench() {
   if (!L.devices.length) { toastMsg('Nothing to save', 'warn'); return; }
   const data = {
     devices: L.devices.map(function (d) {
-      return { id: d.id, kind: d.kind, x: d.x, y: d.y };
+      return { id: d.id, kind: d.kind, x: d.x, y: d.y, rot: d.rot || 0 };
     }),
     wires: L.wiring.wires.map(function (w) {
       return { aDev: w.aDev, aTerm: w.aTerm, bDev: w.bDev, bTerm: w.bTerm };
@@ -289,6 +289,10 @@ function loadBench() {
             entry.model._labId = d.id;
             const el = L.world.querySelector('.device[data-id="' + entry.id + '"]');
             if (el) el.dataset.id = d.id;
+            // Restore the saved rotation before any wire is drawn, so the
+            // first render already has the terminals in the right place.
+            entry.rot = d.rot || 0;
+            if (el) L._applyRotation(el, entry);
             L.netlist.addDevice(entry.model);
           }
         });
