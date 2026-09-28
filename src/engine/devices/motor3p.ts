@@ -28,8 +28,11 @@ export class Motor3P implements Machine {
   readonly id: string;
   readonly type = 'motor_3p';
   readonly label: string;
+  // PE is drawn on the sprite and must be declared here for the same reason
+  // as on the DC machine: an undeclared jack swallows wires silently. It is
+  // protective earth and carries no current in this model.
   readonly terminals = {
-    W2: 1, U2: 1, W1: 1, A2: 1, A3: 1, D1: 1, B1: 1, B2: 1, C2: 1
+    W2: 1, U2: 1, W1: 1, A2: 1, A3: 1, D1: 1, B1: 1, B2: 1, C2: 1, PE: 1
   };
 
   /**

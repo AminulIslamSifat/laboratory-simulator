@@ -45,7 +45,14 @@ export class DCMachine implements Machine {
   // An earlier build declared D3 but stamped and read a terminal named 'D2',
   // so the series field (nameplate: D1-D2) stamped a net that did not exist
   // while the real D2 jack stayed dead. Both are declared and both are used.
-  readonly terminals = { A1: 1, A2: 1, F1: 1, F2: 1, D1: 1, D2: 1, D3: 1 };
+  // PE is the protective-earth jack the sprite paints in yellow. It carries
+  // no current in this simulator — there is no global earth net to bond it
+  // to — but it MUST be declared. The netlist only unions terminals a device
+  // declares, so an undeclared jack silently swallows any wire landed on it:
+  // `parent.has('m:PE')` is false, the union is skipped, and the student's
+  // wire vanishes with no error. Declaring it keeps the wire visible and
+  // gives update() a valid net to read 0 V from.
+  readonly terminals = { A1: 1, A2: 1, F1: 1, F2: 1, D1: 1, D2: 1, D3: 1, PE: 1 };
 
   Ra: number;
 
