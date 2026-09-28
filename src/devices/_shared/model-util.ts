@@ -9,7 +9,7 @@
  * case an explicit zero instead of a silent NaN.
  */
 
-import type { Solution } from '../types.js';
+import type { Solution } from '../../engine/types.js';
 
 /** Potential at a terminal, or 0 V if it is not part of any net. */
 export function netVoltage(sol: Solution, deviceId: string, terminal: string): number {

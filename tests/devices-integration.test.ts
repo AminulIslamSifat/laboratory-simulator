@@ -19,7 +19,7 @@ import {
   LoadBank,
   MeterRack,
   Meter
-} from '../src/engine/devices/index.js';
+} from '../src/devices/index.js';
 
 /** Run the solver for `steps` frames and return the simulator. */
 function run(sim: Simulator, steps: number, dt = 1 / 60): void {

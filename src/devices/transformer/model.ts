@@ -12,10 +12,12 @@
  * (230 + 200 = 430 V nominal, about 400 V under load).
  */
 
-import { Thermal } from '../thermal.js';
-import type { Device, Mna, NetOf, Readout, Solution } from '../types.js';
-import { uid } from '../uid.js';
-import { netDiff, stampConductance, stampNorton } from './util.js';
+import { Thermal } from '../../engine/thermal.js';
+import type { Device, Mna, NetOf, Readout, Solution } from '../../engine/types.js';
+import { uid } from '../../engine/uid.js';
+import { netDiff, stampConductance, stampNorton } from '../_shared/model-util.js';
+import { terminalsOf } from '../_shared/types.js';
+import { transformer } from './layout.js';
 
 /** One secondary section: [terminal A, terminal B, rated volts, resistance]. */
 export type Section = [string, string, number, number];
@@ -37,10 +39,11 @@ export class Transformer implements Device {
   readonly type = 'transformer_1p';
   readonly label: string;
 
-  readonly terminals = {
-    P230: 1, P0: 1, PE: 1, B1: 1, B2: 1, RA: 1,
-    '2U1': 1, '2U3': 1, '2U4': 1, '2U2': 1, '3U1': 1, '3U3': 1, '3U2': 1
-  };
+  // Derived from the layout. The panel has no RA jack, so neither does the
+  // model — `stamp()` guards the 51 ohm branch with a netOf() presence check
+  // and simply skips it when the terminal is absent, which is correct: an
+  // unreachable resistor should not appear in the matrix.
+  readonly terminals = terminalsOf(transformer.layout);
 
   /**
    * Magnetising branch resistance.

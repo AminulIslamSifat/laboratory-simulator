@@ -30,9 +30,11 @@
  * `refreshRails()` emits `open: true` and the simulator skips it.
  */
 
-import { Thermal } from '../thermal.js';
-import type { AuxRail, Device, Mna, NetOf, Readout, Solution } from '../types.js';
-import { uid } from '../uid.js';
+import { Thermal } from '../../engine/thermal.js';
+import type { AuxRail, Device, Mna, NetOf, Readout, Solution } from '../../engine/types.js';
+import { uid } from '../../engine/uid.js';
+import { terminalsOf } from '../_shared/types.js';
+import { powerSupply } from './layout.js';
 
 type RailKey = 'vdc' | 'vac' | 'f3p' | 'd24' | 'd50';
 
@@ -87,13 +89,10 @@ interface Channel {
  * `DC+` against a device that had never heard of it, the netlist dropped the
  * wire silently, and the bench sat dead with no error anywhere.
  */
-export const SUPPLY_TERMINALS: Readonly<Record<string, number>> = {
-  'DC+': 1, 'DC-': 1,
-  'AC-L1': 1, 'AC-L2': 1, 'AC-L3': 1, 'AC-N': 1, 'AC-PE': 1,
-  '3P-L1': 1, '3P-L2': 1, '3P-L3': 1, '3P-L4': 1, '3P-PE': 1,
-  'DC+24': 1, 'DC-24': 1,
-  'DC+50': 1, 'DC-50': 1
-};
+// The supply's jack list lives on its layout, beside the sprite that draws
+// it. This re-export is kept only so callers that named it directly still
+// resolve; new code should read `terminalsOf(powerSupply.layout)`.
+export const SUPPLY_TERMINALS: Readonly<Record<string, number>> = terminalsOf(powerSupply.layout);
 
 export interface DCSupplyOptions {
   id?: string;

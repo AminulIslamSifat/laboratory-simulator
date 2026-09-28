@@ -5,11 +5,13 @@
  * Main winding (Run-U2) plus an auxiliary winding with run capacitor.
  */
 
-import { Thermal } from '../thermal.js';
-import type { Machine, Mna, NetOf, Readout, Solution } from '../types.js';
-import { uid } from '../uid.js';
-import { netDiff, stampConductance, stampNorton } from './util.js';
-import { radOf, rpmOf } from './dc.js';
+import { Thermal } from '../../engine/thermal.js';
+import type { Machine, Mna, NetOf, Readout, Solution } from '../../engine/types.js';
+import { uid } from '../../engine/uid.js';
+import { netDiff, stampConductance, stampNorton } from '../_shared/model-util.js';
+import { radOf, rpmOf } from '../dc-machine/model.js';
+import { terminalsOf } from '../_shared/types.js';
+import { motor1p } from './layout.js';
 
 const TWO_PI = Math.PI * 2;
 
@@ -31,7 +33,7 @@ export class Motor1P implements Machine {
   readonly id: string;
   readonly type = 'motor_1p';
   readonly label: string;
-  readonly terminals = { Aux2: 1, Z2: 1, C: 1, C2: 1, Run: 1, U2: 1, PE: 1 };
+  readonly terminals = terminalsOf(motor1p.layout);
 
   /**
    * Winding resistances.

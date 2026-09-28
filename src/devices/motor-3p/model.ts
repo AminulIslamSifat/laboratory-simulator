@@ -5,11 +5,13 @@
  *            A2 A3 D1 (star/delta taps)
  */
 
-import { Thermal } from '../thermal.js';
-import type { Machine, Mna, NetOf, Readout, Solution } from '../types.js';
-import { uid } from '../uid.js';
-import { netDiff, stampConductance, stampNorton } from './util.js';
-import { radOf, rpmOf } from './dc.js';
+import { Thermal } from '../../engine/thermal.js';
+import type { Machine, Mna, NetOf, Readout, Solution } from '../../engine/types.js';
+import { uid } from '../../engine/uid.js';
+import { netDiff, stampConductance, stampNorton } from '../_shared/model-util.js';
+import { radOf, rpmOf } from '../dc-machine/model.js';
+import { terminalsOf } from '../_shared/types.js';
+import { motor3p } from './layout.js';
 
 export interface Motor3POptions {
   id?: string;
@@ -28,12 +30,7 @@ export class Motor3P implements Machine {
   readonly id: string;
   readonly type = 'motor_3p';
   readonly label: string;
-  // PE is drawn on the sprite and must be declared here for the same reason
-  // as on the DC machine: an undeclared jack swallows wires silently. It is
-  // protective earth and carries no current in this model.
-  readonly terminals = {
-    W2: 1, U2: 1, W1: 1, A2: 1, A3: 1, D1: 1, B1: 1, B2: 1, C2: 1, PE: 1
-  };
+  readonly terminals = terminalsOf(motor3p.layout);
 
   /**
    * Per-phase winding resistance.

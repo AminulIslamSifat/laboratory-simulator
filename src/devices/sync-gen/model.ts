@@ -5,11 +5,13 @@
  * The prime mover holds the rotor at Ns; field current sets the EMF.
  */
 
-import { Thermal } from '../thermal.js';
-import type { Machine, Mna, NetOf, Readout, Solution } from '../types.js';
-import { uid } from '../uid.js';
-import { netDiff, stampConductance, stampNorton } from './util.js';
-import { radOf, rpmOf } from './dc.js';
+import { Thermal } from '../../engine/thermal.js';
+import type { Machine, Mna, NetOf, Readout, Solution } from '../../engine/types.js';
+import { uid } from '../../engine/uid.js';
+import { netDiff, stampConductance, stampNorton } from '../_shared/model-util.js';
+import { radOf, rpmOf } from '../dc-machine/model.js';
+import { terminalsOf } from '../_shared/types.js';
+import { syncGen } from './layout.js';
 
 export interface SyncGenOptions {
   id?: string;
@@ -30,7 +32,7 @@ export class SyncGen implements Machine {
   readonly id: string;
   readonly type = 'sync_gen';
   readonly label: string;
-  readonly terminals = { F1: 1, F2: 1, U1: 1, U2: 1, V1: 1, V2: 1, W1: 1, W2: 1, G: 1 };
+  readonly terminals = terminalsOf(syncGen.layout);
 
   Rf: number;
   Ra: number;

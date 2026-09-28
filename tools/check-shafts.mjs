@@ -1,19 +1,21 @@
 /**
  * Shaft-port alignment check.
  *
- * Every rotating machine paints a flange on its right (or left) face and
- * declares a mechanical SHAFT terminal so a Coupling can snap to it. Two
- * things have to hold, and both have silently broken before:
+ * Every rotating machine paints a flange and declares a mechanical SHAFT
+ * terminal so a Coupling can snap to it. Two things have to hold, and both
+ * have silently broken before:
  *
  *   1. The flange must fit INSIDE the sprite's viewBox. A flange drawn past
  *      the edge is clipped by the SVG, so it renders as a detached blob
- *      floating outside the panel while the terminal dot sits on empty space.
- *      The 3-phase motor had its whole shaft at x=1000..1250 in a viewBox
- *      only 896 wide — completely invisible, terminal marking nothing.
+ *      while the terminal dot sits on empty space.
  *
  *   2. The SHAFT terminal, converted from viewBox space to device space, must
  *      land on the flange CENTRE. Off by more than a pixel or two and the
  *      coupling snaps to the wrong spot.
+ *
+ * This used to parse one 2,200-line sprites.js. The per-device split moved
+ * each sprite and layout into its own folder, so it now reads the specific
+ * files for each machine. The check itself is unchanged.
  *
  * Run: node tools/check-shafts.mjs
  */
@@ -23,25 +25,27 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const src = readFileSync(join(root, 'js/lab/sprites.js'), 'utf8');
 
 /**
- * Each machine: the sprite function, the device-space layout box, the flange
- * centre in viewBox coordinates, the flange radius, and the terminal name.
- * Flange coordinates are read back out of the sprite source so this file
- * cannot drift from the drawing it checks.
+ * Each machine: its device folder, sprite function, layout export and the
+ * mechanical terminal name. Both files are read from disk so this check
+ * cannot drift from the drawing it verifies.
  */
 const MACHINES = [
-  { name: 'DCMachine', fn: 'spriteDCMachine', term: 'SHAFT' },
-  { name: 'Motor3P', fn: 'spriteAsyncMotor3P', term: 'SHAFT' },
-  { name: 'Motor1P', fn: 'spriteAsyncMotor1P', term: 'SHAFT' },
-  { name: 'SyncGen', fn: 'spriteSyncGen', term: 'SHAFT' }
+  { name: 'DCMachine', dir: 'dc-machine', fn: 'spriteDCMachine',      layout: 'dcMachine', term: 'SHAFT' },
+  { name: 'Motor3P',   dir: 'motor-3p',   fn: 'spriteAsyncMotor3P',   layout: 'motor3p',   term: 'SHAFT' },
+  { name: 'Motor1P',   dir: 'motor-1p',   fn: 'spriteAsyncMotor1P',   layout: 'motor1p',   term: 'SHAFT' },
+  { name: 'SyncGen',   dir: 'sync-gen',   fn: 'spriteSyncGen',        layout: 'syncGen',   term: 'SHAFT' }
 ];
+
+function readDevice(dir, kind) {
+  return readFileSync(join(root, 'src/devices', dir, kind), 'utf8');
+}
 
 /** Slice a function body out by brace matching. */
 function fnBody(src, name) {
-  const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`${name} not found`);
+  const start = src.indexOf('function ' + name + '(');
+  if (start < 0) throw new Error(name + ' not found');
   const open = src.indexOf('{', start);
   let depth = 0;
   for (let i = open; i < src.length; i++) {
@@ -51,26 +55,40 @@ function fnBody(src, name) {
       if (depth === 0) return src.slice(open, i + 1);
     }
   }
-  throw new Error(`unbalanced braces in ${name}`);
+  throw new Error('unbalanced braces in ' + name);
 }
 
-/** Pull the layout box from the registry entry that uses this sprite. */
-function layoutOf(src, fn) {
-  const at = src.indexOf(`sprite: ${fn}`);
-  if (at < 0) throw new Error(`no registry entry for ${fn}`);
-  const tail = src.slice(at, at + 400);
-  const m = tail.match(/w:\s*([\d.]+),\s*h:\s*([\d.]+)/);
-  if (!m) throw new Error(`no layout w/h for ${fn}`);
+/** Pull the layout box from the device's layout file. */
+function layoutOf(src) {
+  const m = src.match(/w:\s*([\d.]+),\s*h:\s*([\d.]+)/);
+  if (!m) throw new Error('no layout w/h');
   return [Number(m[1]), Number(m[2])];
 }
 
-/** Pull the SHAFT terminal coordinate from the registry entry. */
-function termOf(src, fn) {
-  const at = src.indexOf(`sprite: ${fn}`);
-  const tail = src.slice(at, at + 1200);
-  const m = tail.match(/k:\s*'SHAFT',\s*x:\s*([\d.]+),\s*y:\s*([\d.]+)/);
-  if (!m) throw new Error(`no SHAFT terminal for ${fn}`);
-  return [Number(m[1]), Number(m[2])];
+/**
+ * Pull a terminal's coordinate out of a layout file.
+ *
+ * Locates the `k: '<term>'` marker by plain indexOf, then reads the x and y
+ * that follow. No regex: a RegExp built from a string needs a doubled
+ * backslash for every `\s` and `\d`, and those doubled backslashes have been
+ * eaten by the tool transport more than once. String methods cannot be.
+ */
+function termOf(src, term) {
+  const marker = "k: '" + term + "'";
+  const at = src.indexOf(marker);
+  if (at < 0) throw new Error('no ' + term + ' terminal');
+  const tail = src.slice(at, at + 200);
+
+  const xAt = tail.indexOf('x:');
+  const yAt = tail.indexOf('y:');
+  if (xAt < 0 || yAt < 0) throw new Error(term + ' terminal has no x/y');
+
+  const x = Number(tail.slice(xAt + 2).trim().split(/[,}]/)[0]);
+  const y = Number(tail.slice(yAt + 2).trim().split(/[,}]/)[0]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error(term + ' terminal has a non-numeric x/y');
+  }
+  return [x, y];
 }
 
 let bad = 0;
@@ -78,9 +96,18 @@ console.log('machine'.padEnd(12), 'flange->device'.padEnd(20), 'term'.padEnd(14)
 console.log('-'.repeat(78));
 
 for (const m of MACHINES) {
-  const body = fnBody(src, m.fn);
+  let spriteSrc, layoutSrc;
+  try {
+    spriteSrc = readDevice(m.dir, 'sprite.ts');
+    layoutSrc = readDevice(m.dir, 'layout.ts');
+  } catch (err) {
+    console.log(m.name.padEnd(12), 'MISSING FILE: ' + err.message);
+    bad++;
+    continue;
+  }
 
-  // viewBox: `viewBox="minX minY width height"`
+  const body = fnBody(spriteSrc, m.fn);
+
   const vb = body.match(/viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"/);
   if (!vb) {
     console.log(m.name.padEnd(12), 'NO VIEWBOX');
@@ -89,13 +116,8 @@ for (const m of MACHINES) {
   }
   const [vx, vy, vw, vh] = vb.slice(1).map(Number);
 
-  // The shaft centre is the `data-spin` group's transform-origin. That is the
-  // point the render loop actually rotates the rotor about, so it IS the shaft
-  // by definition — no guessing from circle sizes.
-  //
-  // A previous version of this check picked the largest circle in the body,
-  // which grabbed the machine's nameplate disc (r=50 at 676,552) instead of
-  // the flange and reported a 143px error on a machine that was correct.
+  // The shaft centre is the data-spin group's transform-origin — the point
+  // the render loop rotates the rotor about, so it IS the shaft by definition.
   const spin = body.match(/data-spin[^>]*transform-origin="([\d.]+) ([\d.]+)"/);
   if (!spin) {
     console.log(m.name.padEnd(12), 'NO SPIN GROUP');
@@ -105,9 +127,8 @@ for (const m of MACHINES) {
   const fx = Number(spin[1]);
   const fy = Number(spin[2]);
 
-  // Radius for the clipping test: the largest circle centred on the shaft.
-  // SyncGen paints its shaft as a rounded rect rather than a circle, so fall
-  // back to a small nominal radius when nothing matches.
+  // Largest circle centred on the shaft, for the clipping test. SyncGen paints
+  // its shaft as a rounded rect, so fall back to a rect half-extent.
   let fr = 0;
   for (const c of body.matchAll(/<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)"/g)) {
     if (Math.abs(Number(c[1]) - fx) < 0.5 && Math.abs(Number(c[2]) - fy) < 0.5) {
@@ -123,8 +144,9 @@ for (const m of MACHINES) {
       }
     }
   }
-  const [w, h] = layoutOf(src, m.fn);
-  const [tx, ty] = termOf(src, m.fn);
+
+  const [w, h] = layoutOf(layoutSrc);
+  const [tx, ty] = termOf(layoutSrc, m.term);
 
   const dx = ((fx - vx) * w) / vw;
   const dy = ((fy - vy) * h) / vh;
@@ -141,16 +163,16 @@ for (const m of MACHINES) {
 
   console.log(
     m.name.padEnd(12),
-    `(${dx.toFixed(1)},${dy.toFixed(1)})`.padEnd(20),
-    `(${tx},${ty})`.padEnd(14),
-    `${err.toFixed(2)}px`.padEnd(9),
-    inside ? 'ok' : `CLIPPED r=${right}>${vx + vw}`
+    ('(' + dx.toFixed(1) + ',' + dy.toFixed(1) + ')').padEnd(20),
+    ('(' + tx + ',' + ty + ')').padEnd(14),
+    (err.toFixed(2) + 'px').padEnd(9),
+    inside ? 'ok' : ('CLIPPED r=' + right + '>' + (vx + vw))
   );
 }
 
 console.log('-'.repeat(78));
 if (bad) {
-  console.log(`\n${bad} machine(s) with a clipped flange or a misplaced shaft terminal.`);
+  console.log('\n' + bad + ' machine(s) with a clipped flange or a misplaced shaft terminal.');
   process.exit(1);
 }
 console.log('\nAll shaft flanges are inside their viewBox and every SHAFT terminal sits on the flange centre.');

@@ -10,9 +10,11 @@
  * a voltmeter times an ammeter.
  */
 
-import type { Device, Mna, NetOf, Readout, Solution } from '../types.js';
-import { uid } from '../uid.js';
-import { stampConductance } from './util.js';
+import type { Device, Mna, NetOf, Readout, Solution } from '../../engine/types.js';
+import { uid } from '../../engine/uid.js';
+import { stampConductance } from '../_shared/model-util.js';
+import { terminalsOf } from '../_shared/types.js';
+import { meterRack } from './layout.js';
 
 interface RackChannel {
   id: string;
@@ -44,7 +46,11 @@ export class MeterRack implements Device {
 
   readonly channels: RackChannel[];
 
-  terminals: Record<string, number> = {};
+  // Derived from the layout, like every other device. The channel table
+  // below names the jacks each display reads; the assertion in the
+  // constructor proves every one of those names is actually painted.
+  terminals = terminalsOf(meterRack.layout);
+
   /** Terminal pairs the netlist must bond. See the constructor. */
   bonds: Array<[string, string]> = [];
 
@@ -100,13 +106,24 @@ export class MeterRack implements Device {
       }
     ];
 
-    const T = this.terminals;
+    // Every jack a display reads must exist on the panel. The channel table
+    // and the layout are both hand-maintained, and a typo in either —
+    // 'DIN1-' spelled 'DIN1' — would give the netlist a name it can never
+    // resolve. `netOf()` would return undefined, the reading would sit at
+    // zero, and nothing would say why. Fail at construction instead.
+    const missing: string[] = [];
     for (const c of this.channels) {
-      for (const k of c.pos) T[k] = 1;
-      for (const k of c.neg) T[k] = 1;
+      for (const k of c.pos) if (!(k in this.terminals)) missing.push(k);
+      for (const k of c.neg) if (!(k in this.terminals)) missing.push(k);
     }
-    for (const k of this.seriesPos) T[k] = 1;
-    for (const k of this.seriesNeg) T[k] = 1;
+    for (const k of this.seriesPos) if (!(k in this.terminals)) missing.push(k);
+    for (const k of this.seriesNeg) if (!(k in this.terminals)) missing.push(k);
+    if (missing.length > 0) {
+      throw new Error(
+        'MeterRack ' + this.id + ' reads jacks its panel does not draw: ' +
+        missing.join(', ')
+      );
+    }
 
     // Every post in one row is the SAME node - the rows exist so a wire can
     // land on whichever post is handy and still close the loop. Declaring the

@@ -5,10 +5,12 @@
  * as either a motor or a generator. The panel paints PE A2 D3 D1 A1 D2 F1 F2.
  */
 
-import { Thermal } from '../thermal.js';
-import type { Machine, Mna, NetOf, Readout, Solution } from '../types.js';
-import { uid } from '../uid.js';
-import { netDiff, netVoltage, stampConductance, stampNorton } from './util.js';
+import { Thermal } from '../../engine/thermal.js';
+import type { Machine, Mna, NetOf, Readout, Solution } from '../../engine/types.js';
+import { uid } from '../../engine/uid.js';
+import { netDiff, netVoltage, stampConductance, stampNorton } from '../_shared/model-util.js';
+import { terminalsOf } from '../_shared/types.js';
+import { dcMachine } from './layout.js';
 
 export const TWO_PI = Math.PI * 2;
 
@@ -52,7 +54,11 @@ export class DCMachine implements Machine {
   // `parent.has('m:PE')` is false, the union is skipped, and the student's
   // wire vanishes with no error. Declaring it keeps the wire visible and
   // gives update() a valid net to read 0 V from.
-  readonly terminals = { A1: 1, A2: 1, F1: 1, F2: 1, D1: 1, D2: 1, D3: 1, PE: 1 };
+  // Read from the panel layout, not declared a second time. The model and
+  // the sprite are the same device; keeping two terminal lists in sync by
+  // hand is what produced the PE bug — a jack was drawn that no model had
+  // heard of, the netlist dropped the wire silently, and the bench sat dead.
+  readonly terminals = terminalsOf(dcMachine.layout);
 
   Ra: number;
 
