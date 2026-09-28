@@ -6,8 +6,10 @@
   "description": "EEE-2152 Electrical Machines Laboratory — interactive bench simulator with a live MNA solver",
   "scripts": {
     "dev": "vite",
-    "build": "npm run check:terminals && tsc --noEmit && vite build",
+    "build": "npm run check && tsc --noEmit && vite build",
+    "check": "npm run check:terminals && npm run check:shafts",
     "check:terminals": "node tools/check-terminals.mjs",
+    "check:shafts": "node tools/check-shafts.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

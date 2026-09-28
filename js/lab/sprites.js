@@ -144,14 +144,22 @@ function spriteDCMachine() {
   // ---- output shaft + coupling flange (right face) ----
   // Painted only: no electrical terminal. The flange is where a Coupling
   // device's mech port visually attaches. Rotor mark spins with rpm.
-  s += '<rect x="1050" y="410" width="110" height="60" rx="6" fill="#8f9391" stroke="#111" stroke-width="3"/>';
-  s += '<circle cx="1160" cy="440" r="46" fill="#c8ccc9" stroke="#111" stroke-width="3"/>';
-  s += '<circle cx="1160" cy="440" r="30" fill="#a8adab" stroke="#333" stroke-width="2"/>';
-  s += '<g data-spin="1" transform-origin="1160 440">';
-  s += '<rect x="1156" y="400" width="8" height="80" rx="3" fill="#b23b30" stroke="#111" stroke-width="1.6"/>';
+  //
+  // Flange centre is x=1140, not 1160. At 1160 with r=46 the right edge landed
+  // at 1206 in a viewBox only 1195 wide, so 11px of the flange was shaved off
+  // by the SVG edge — the same overflow that threw the 3-phase motor's shaft
+  // clean out of its panel, just caught earlier because this one is only
+  // slightly too far right. 1140 + 46 = 1186, comfortably inside.
+  //
+  // The SHAFT terminal moves with it: 1140 * 360/1195 = 343.4 in device space.
+  s += '<rect x="1030" y="410" width="110" height="60" rx="6" fill="#8f9391" stroke="#111" stroke-width="3"/>';
+  s += '<circle cx="1140" cy="440" r="46" fill="#c8ccc9" stroke="#111" stroke-width="3"/>';
+  s += '<circle cx="1140" cy="440" r="30" fill="#a8adab" stroke="#333" stroke-width="2"/>';
+  s += '<g data-spin="1" transform-origin="1140 440">';
+  s += '<rect x="1136" y="400" width="8" height="80" rx="3" fill="#b23b30" stroke="#111" stroke-width="1.6"/>';
   s += '</g>';
-  s += '<circle cx="1160" cy="440" r="9" fill="#2b2e2d" stroke="#111" stroke-width="2"/>';
-  s += txt(1160, 505, 'SHAFT', { size: 13, weight: '700', anchor: 'middle' });
+  s += '<circle cx="1140" cy="440" r="9" fill="#2b2e2d" stroke="#111" stroke-width="2"/>';
+  s += txt(1140, 505, 'SHAFT', { size: 13, weight: '700', anchor: 'middle' });
 
   return s + '</svg>';
 }
@@ -275,16 +283,31 @@ function spriteAsyncMotor3P() {
   s += txt(472, 934, 'MOTORE ASINCRONO TRIFASICO', { size: 14, anchor: 'middle' });
 
   // ---- output shaft + spinning rotor (right face) ----
-  // The machine is tall (896 ref px); the shaft leaves the right side at
-  // mid-height so a Coupling placed to its right can line up.
-  s += '<rect x="1000" y="480" width="170" height="62" rx="7" fill="#9a9d9b" stroke="#111" stroke-width="3"/>';
-  s += '<circle cx="1190" cy="511" r="54" fill="#c8ccc9" stroke="#111" stroke-width="3"/>';
-  s += '<circle cx="1190" cy="511" r="36" fill="#a8adab" stroke="#333" stroke-width="2"/>';
-  s += '<g data-spin="1" transform-origin="1190 511">';
-  s += '<rect x="1183" y="461" width="14" height="100" rx="4" fill="#e8720c" stroke="#111" stroke-width="1.8"/>';
+  //
+  // The flange sits INSIDE the viewBox. It used to be drawn at x=1000..1250
+  // in a viewBox only 896 wide, so the entire shaft fell off the right edge of
+  // the SVG and rendered as a detached blob floating outside the panel, while
+  // the SHAFT terminal dot sat on empty space with nothing under it.
+  //
+  // The comment here used to say "the machine is tall (896 ref px)" — which is
+  // true of its HEIGHT and false of its width. 896 is the WIDTH, so anything
+  // drawn past 896 simply does not exist. The 1:1 DC machine gets this right
+  // because its viewBox is 1195 wide; these coordinates were copied without
+  // rescaling.
+  //
+  // Placed at viewBox (825, 596): right of the body (which ends at x=750) and
+  // clear of the 896 edge once the 54px flange radius is added. The layout's
+  // SHAFT terminal is the same point in device space — 825 * 360/896 = 331.5,
+  // 596 * 479/1192 = 239.5 — so the jack dot lands on the flange centre and a
+  // Coupling can actually snap to it.
+  s += '<rect x="740" y="565" width="95" height="62" rx="7" fill="#9a9d9b" stroke="#111" stroke-width="3"/>';
+  s += '<circle cx="825" cy="596" r="54" fill="#c8ccc9" stroke="#111" stroke-width="3"/>';
+  s += '<circle cx="825" cy="596" r="36" fill="#a8adab" stroke="#333" stroke-width="2"/>';
+  s += '<g data-spin="1" transform-origin="825 596">';
+  s += '<rect x="818" y="546" width="14" height="100" rx="4" fill="#e8720c" stroke="#111" stroke-width="1.8"/>';
   s += '</g>';
-  s += '<circle cx="1190" cy="511" r="11" fill="#2b2e2d" stroke="#111" stroke-width="2"/>';
-  s += txt(1190, 598, 'SHAFT', { size: 16, weight: '700', anchor: 'middle' });
+  s += '<circle cx="825" cy="596" r="11" fill="#2b2e2d" stroke="#111" stroke-width="2"/>';
+  s += txt(825, 683, 'SHAFT', { size: 16, weight: '700', anchor: 'middle' });
 
   return s + '</svg>';
 }
@@ -1908,9 +1931,11 @@ const EQUIPMENT = {
       { k: 'D2', x: 193, y: 172 },
       { k: 'F1', x: 255, y: 142 },
       { k: 'F2', x: 261, y: 181 },
-      // Mechanical shaft port — sits on the painted flange at device(349,133).
+      // Mechanical shaft port — sits on the painted flange centre.
       // A coupling's MA/MB snaps here. Carries torque, not current.
-      { k: 'SHAFT', x: 349, y: 133, mech: 1 }
+      // Flange is at viewBox (1140,440): 1140 * 360/1195 = 343.4,
+      // 440 * 270/896 = 132.6. Must track the flange if it ever moves.
+      { k: 'SHAFT', x: 343, y: 133, mech: 1 }
     ]}
   },
 
@@ -1935,8 +1960,11 @@ const EQUIPMENT = {
       { k: 'B1', x: 131, y: 329 },
       { k: 'B2', x: 162, y: 329 },
       { k: 'C2', x: 193, y: 329 },
-      // Shaft port on the painted flange at device(358,273).
-      { k: 'SHAFT', x: 358, y: 273, mech: 1 }
+      // Shaft port on the painted flange. Must equal the flange CENTRE in
+      // device space: 825 * 360/896 = 331.5, 596 * 479/1192 = 239.5. This was
+      // 358,273 — the coordinates of a flange that was itself drawn outside
+      // the SVG, so the dot marked nothing.
+      { k: 'SHAFT', x: 332, y: 240, mech: 1 }
     ]}
   },
 
