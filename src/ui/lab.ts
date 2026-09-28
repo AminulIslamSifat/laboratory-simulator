@@ -17,6 +17,7 @@
  * correct wherever it is built - in the lab, in a test, or from a save file.
  */
 
+import { refreshIcons } from './icons.js';
 import { Netlist } from '../engine/netlist.js';
 import { Simulator } from '../engine/simulator.js';
 import type { Device, Readout, Solution } from '../engine/types.js';
@@ -292,8 +293,7 @@ export class Lab {
       btn.addEventListener('click', () => this.place(kind));
       this.palList.appendChild(btn);
     });
-    const lucide = (window as unknown as { lucide?: { createIcons: () => void } }).lucide;
-    if (lucide) lucide.createIcons();
+    refreshIcons();
   }
 
   private _bindPalette(): void {
@@ -320,8 +320,7 @@ export class Lab {
         '<span class="pi-sub">' + (p.sub || '') + '</span></span>';
       this.palPresets.appendChild(btn);
     });
-    const lucide = (window as unknown as { lucide?: { createIcons: () => void } }).lucide;
-    if (lucide) lucide.createIcons();
+    refreshIcons();
   }
 
   loadPreset(key: string): void {
@@ -860,8 +859,7 @@ export class Lab {
 
     document.body.appendChild(menu);
     this._ctxEl = menu;
-    const lucide = (window as unknown as { lucide?: { createIcons: () => void } }).lucide;
-    if (lucide) lucide.createIcons();
+    refreshIcons();
   }
 
   private _showDeviceCtx(x: number, y: number, devId: string): void {
@@ -1277,8 +1275,7 @@ export class Lab {
     });
 
     this.meterList.innerHTML = html;
-    const lucide = (window as unknown as { lucide?: { createIcons: () => void } }).lucide;
-    if (lucide) lucide.createIcons();
+    refreshIcons();
   }
 
   private _onMeterClick(e: MouseEvent): void {

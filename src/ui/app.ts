@@ -6,6 +6,7 @@
  * and lives in `lab.ts`; nothing here touches the simulation directly.
  */
 
+import { refreshIcons } from './icons.js';
 import { Lab } from './lab.js';
 import { PRESETS } from './presets.js';
 import { REFERENCE_DOCS } from './reference.js';
@@ -28,11 +29,6 @@ const drawerTtl = el('drawer-title');
 const drawerBody = el('drawer-body');
 const toast = el('toast');
 
-/** Lucide, if the CDN script loaded. Every call site tolerates it being absent. */
-function refreshIcons(): void {
-  const lucide = (window as unknown as { lucide?: { createIcons: () => void } }).lucide;
-  if (lucide) lucide.createIcons();
-}
 
 /* ────────────────────────────────────────────────────────────────
    Boot sequence

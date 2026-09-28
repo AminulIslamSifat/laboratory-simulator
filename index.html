@@ -5,7 +5,6 @@
 <meta name='viewport' content='width=device-width, initial-scale=1.0' />
 <title>EEE-2152 · Electrical Machines Laboratory</title>
 <link rel='stylesheet' href='assets/style.css' />
-<script src='https://unpkg.com/lucide@latest/dist/umd/lucide.min.js'></script>
 </head>
 <body>
 
@@ -144,6 +143,17 @@
   The old build hand-ordered eight <script> tags, each carrying a matching
   ?v=18 that had to be edited in nine places. Forgetting one gave a student a
   stale sprites.js against a fresh lab.js and a bug that took an hour to find.
+-->
+<!--
+  Lucide used to load here from a <script src="unpkg.com/lucide@latest">.
+  That made the lab useless with no network, and `@latest` pinned nothing,
+  so the icon set could change under the app without a line of this repo
+  changing. It is now bundled and tree-shaken - see src/ui/icons.ts.
+
+  There is deliberately no inline icon call here: this module script is
+  deferred, so an inline script after it would run BEFORE the module does
+  and find no renderer installed. The boot sequence in src/ui/app.ts calls
+  refreshIcons() itself once the app is ready.
 -->
 <script type='module' src='/src/main.ts'></script>
 </body>
