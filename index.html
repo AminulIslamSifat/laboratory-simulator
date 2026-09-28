@@ -4,7 +4,7 @@
 <meta charset='UTF-8' />
 <meta name='viewport' content='width=device-width, initial-scale=1.0' />
 <title>EEE-2152 · Electrical Machines Laboratory</title>
-<link rel='stylesheet' href='assets/style.css?v=18' />
+<link rel='stylesheet' href='assets/style.css' />
 <script src='https://unpkg.com/lucide@latest/dist/umd/lucide.min.js'></script>
 </head>
 <body>
@@ -137,14 +137,14 @@
 
 <div class='toast hidden' id='toast'></div>
 
-<script src='js/engine/core.js?v=18'></script>
-<script src='js/engine/devices.js?v=18'></script>
-<script src='js/lab/sprites.js?v=18'></script>
-<script src='js/lab/wiring.js?v=18'></script>
-<script src='js/lab/lab.js?v=18'></script>
-<script src='js/experiments/index.js?v=18'></script>
-<script src='js/reference.js?v=18'></script>
-<script src='js/app.js?v=18'></script>
-<script>lucide.createIcons();</script>
+<!--
+  One module entry point. Vite follows the import graph from here, so there
+  is no load order to get wrong and no ?v= cache-buster to bump by hand.
+
+  The old build hand-ordered eight <script> tags, each carrying a matching
+  ?v=18 that had to be edited in nine places. Forgetting one gave a student a
+  stale sprites.js against a fresh lab.js and a bug that took an hour to find.
+-->
+<script type='module' src='/src/main.ts'></script>
 </body>
 </html>
