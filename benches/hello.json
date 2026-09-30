@@ -1,0 +1,94 @@
+{
+  "devices": [
+    {
+      "id": "power_supply_4_5ufh",
+      "kind": "power_supply",
+      "x": 89.51030698348094,
+      "y": 12.049521623056904,
+      "rot": 0
+    },
+    {
+      "id": "single_phase_transformer_5_e991",
+      "kind": "single_phase_transformer",
+      "x": 868.2328917397712,
+      "y": 16.604120324154408,
+      "rot": 0
+    },
+    {
+      "id": "meter_rack_6_i9pd",
+      "kind": "meter_rack",
+      "x": 186.0356304325294,
+      "y": 579.3985194265126,
+      "rot": 0
+    },
+    {
+      "id": "single_phase_transformer_5_27yb",
+      "kind": "single_phase_transformer",
+      "x": 922.0849514477118,
+      "y": 589.2145922855157,
+      "rot": 0
+    }
+  ],
+  "wires": [
+    {
+      "aDev": "power_supply_4_5ufh",
+      "aTerm": "AC-L1",
+      "bDev": "meter_rack_6_i9pd",
+      "bTerm": "in"
+    },
+    {
+      "aDev": "meter_rack_6_i9pd",
+      "aTerm": "out",
+      "bDev": "single_phase_transformer_5_e991",
+      "bTerm": "P230"
+    },
+    {
+      "aDev": "single_phase_transformer_5_e991",
+      "aTerm": "P0",
+      "bDev": "power_supply_4_5ufh",
+      "bTerm": "AC-N"
+    },
+    {
+      "aDev": "single_phase_transformer_5_e991",
+      "aTerm": "P0",
+      "bDev": "single_phase_transformer_5_e991",
+      "bTerm": "3U2"
+    },
+    {
+      "aDev": "meter_rack_6_i9pd",
+      "aTerm": "L1",
+      "bDev": "single_phase_transformer_5_e991",
+      "bTerm": "P230"
+    },
+    {
+      "aDev": "meter_rack_6_i9pd",
+      "aTerm": "N",
+      "bDev": "single_phase_transformer_5_e991",
+      "bTerm": "3U1"
+    },
+    {
+      "aDev": "single_phase_transformer_5_27yb",
+      "aTerm": "P230",
+      "bDev": "single_phase_transformer_5_27yb",
+      "bTerm": "3U1"
+    },
+    {
+      "aDev": "meter_rack_6_i9pd",
+      "aTerm": "out",
+      "bDev": "single_phase_transformer_5_27yb",
+      "bTerm": "P0"
+    },
+    {
+      "aDev": "single_phase_transformer_5_27yb",
+      "aTerm": "P0",
+      "bDev": "meter_rack_6_i9pd",
+      "bTerm": "L1b"
+    },
+    {
+      "aDev": "single_phase_transformer_5_27yb",
+      "aTerm": "3U2",
+      "bDev": "meter_rack_6_i9pd",
+      "bTerm": "Nb"
+    }
+  ]
+}

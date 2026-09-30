@@ -23,7 +23,13 @@ describe('model terminals match panel layout', () => {
       const Ctor = DEVICE_KINDS[kind] as unknown as new () => HasTerminals;
       const dev = new Ctor();
       const model = Object.keys(dev.terminals ?? {}).sort();
-      const drawn = entry.layout.terms.map((t) => t.k).sort();
+      // Dedupe the drawn list. A panel may paint the SAME node on more than
+      // one jack - the DC machine's upper-centre A1 tap shares its name with
+      // the right-hand A1 post, so both fold into one armature net. The model
+      // keys the node once; the panel draws it twice. Comparing the model's
+      // key set against the panel's raw name list would flag that deliberate
+      // pair as drift, which it is not.
+      const drawn = [...new Set(entry.layout.terms.map((t) => t.k))].sort();
       expect(model).toEqual(drawn);
     });
   }

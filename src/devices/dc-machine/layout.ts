@@ -10,8 +10,11 @@ export const dcMachine: EquipmentEntry = {
       { k: 'A2', x: 116, y: 151 },
       { k: 'D3', x: 114, y: 168 },
       { k: 'D1', x: 114, y: 186 },
-      { k: 'A1', x: 161, y: 177 },
-      { k: 'D2', x: 193, y: 172 },
+      // Photo had A1/D2 swapped. Upper centre = shorted A1 tap, lower = D2,
+      // right = main A1. Both A1 keys fold into one net.
+      { k: 'A1', x: 161, y: 157 },
+      { k: 'D2', x: 161, y: 177 },
+      { k: 'A1', x: 193, y: 172 },
       { k: 'F1', x: 255, y: 142 },
       { k: 'F2', x: 261, y: 181 },
       // Mechanical shaft port — sits on the painted flange centre.

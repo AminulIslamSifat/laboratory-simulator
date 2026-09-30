@@ -123,9 +123,39 @@ export class Motor3P implements Machine {
       const NsyncRad = radOf(this.Nsync);
       const slipNow = (NsyncRad - this.omega) / NsyncRad;
       this.slip = Math.max(-0.5, Math.min(1, slipNow));
-      const s = Math.max(0.02, Math.abs(this.slip));
-      const pull = (this.Iline * this.Iline * 0.6) / s;
-      this.Te = Math.sign(this.slip || 1) * Math.min(pull, 40);
+
+      // Torque from the standard Kloss (approximate) induction-motor curve:
+      //
+      //     T / Tb = 2 / (s/sb + sb/s)
+      //
+      // Tb is the breakdown torque, reached at the breakdown slip sb (~0.2
+      // for a machine this size). Torque RISES to Tb as slip falls from 1,
+      // then FALLS back to zero at s = 0 - which is what makes an induction
+      // motor settle at a small positive slip instead of racing to the
+      // synchronous clamp.
+      //
+      // The old shape was `pull = I^2 * k / s`, monotonically INCREASING as s
+      // fell, so it pinned itself against the 40 N m ceiling and the motor
+      // crept up to 0.1% slip - 2997 rpm against a 3000 rpm field, a machine
+      // that was effectively synchronous. That is not an induction motor.
+      // Breakdown torque from the nameplate, not the current.
+      //
+      //   Trated = Prated / omega_rated = 1500 W / (2850 rpm * 2pi/60)
+      //   Tb     = 2.5 * Trated   (typical breakdown ratio for a NEMA B frame)
+      //
+      // Sizing Tb off `Irated` was dimensionally wrong (amps are not N m) and
+      // left the machine with so little torque that its own no-load friction
+      // dragged it down to 0.8% slip - a motor that could barely turn itself.
+      const Prated = 1500;
+      const wRated = radOf(this.Nrated);
+      const Trated = Prated / Math.max(1, wRated);
+      const Tb = 2.5 * Trated;
+      const sb = 0.2;
+      const sAbs = Math.max(1e-3, Math.abs(this.slip));
+      const ratio = sAbs / sb + sb / sAbs;
+      const Tmag = (2 * Tb) / ratio;
+      this.Te = Math.sign(this.slip || 1) * Tmag;
+      if (!Number.isFinite(this.Te)) this.Te = 0;
     } else {
       this.Te = 0;
       this.slip = 1;

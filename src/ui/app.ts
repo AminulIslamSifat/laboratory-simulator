@@ -10,6 +10,12 @@ import { refreshIcons } from './icons.js';
 import { Lab } from './lab.js';
 import { PRESETS } from './presets.js';
 import { REFERENCE_DOCS } from './reference.js';
+import { ago, type BenchFile } from './bench-store.js';
+import {
+  apiAvailable, resetAvailability,
+  saveBenchToServer, listServerBenches, loadBenchFromServer, deleteServerBench,
+  type ServerBench
+} from './bench-server.js';
 
 /** Shorthand for getElementById, non-null because every id below is in the HTML. */
 function el(id: string): HTMLElement {
@@ -194,31 +200,114 @@ function showAbout(): void {
    Save / load bench
    ──────────────────────────────────────────────────────────────── */
 
-interface BenchFile {
-  devices: Array<{ id: string; kind: string; x: number; y: number; rot?: number }>;
-  wires: Array<{ aDev: string; aTerm: string; bDev: string; bTerm: string }>;
+/**
+ * Snapshot the live bench into the serialisable shape.
+ *
+ * Device ids are kept verbatim: the wires reference them, so a fresh id on
+ * load would leave every connection pointing at a device that no longer
+ * exists and the bench would sit silently dead.
+ */
+function captureBench(): BenchFile {
+  const L = ensureLab();
+  const devices = L.devices.map((d) => ({ id: d.id, kind: d.kind, x: d.x, y: d.y, rot: d.rot || 0 }));
+  // Drop dangling wires before they reach disk.
+  //
+  // A wire can outlive its device: the undo stack snapshots the wires around
+  // a deletion and re-adds them on Ctrl+Z, and if the device id was recycled
+  // or the device never came back, the wire survives pointing at an id that
+  // is not in `devices`. On reload that becomes a floating node the solver
+  // complains about, and the wire renders to a terminal that does not exist.
+  // The saved file is the one place worth enforcing this: the live wiring
+  // layer stays tolerant so a half-finished edit is never silently mangled.
+  const ids = new Set(devices.map((d) => d.id));
+  const wires = L.wiring.wires
+    .filter((w) => ids.has(w.aDev) && ids.has(w.bDev))
+    .map((w) => ({ aDev: w.aDev, aTerm: w.aTerm, bDev: w.bDev, bTerm: w.bTerm }));
+  return { devices, wires };
 }
 
-function saveBench(): void {
+/**
+ * Rebuild a bench from a snapshot, replacing whatever is on the surface.
+ *
+ * Shared by the file loader and the named-slot library so the two cannot
+ * drift — a fix to the id-restoration dance below has to land once.
+ */
+function restoreBench(data: BenchFile): void {
   const L = ensureLab();
-  if (!L.devices.length) { toastMsg('Nothing to save', 'warn'); return; }
+  L.clear();
 
-  const data: BenchFile = {
-    devices: L.devices.map((d) => ({ id: d.id, kind: d.kind, x: d.x, y: d.y, rot: d.rot || 0 })),
-    wires: L.wiring.wires.map((w) => ({ aDev: w.aDev, aTerm: w.aTerm, bDev: w.bDev, bTerm: w.bTerm }))
-  };
+  data.devices.forEach((d) => {
+    const entry = L.place(d.kind, d.x, d.y);
+    if (!entry) return;
 
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    // Grab the DOM node BEFORE touching ids.
+    //
+    // `place()` minted a fresh id and rendered the node with it. The node's
+    // dataset must be re-pointed to the SAVED id, and the only moment we can
+    // find it is while it still carries the fresh id. The old code queried
+    // AFTER assigning `entry.id = d.id`, so the selector looked for a node
+    // that did not exist yet and `node` was always null: dataset.id kept the
+    // fresh id while the netlist/devices used the saved one. Every wire then
+    // failed to draw (pointOf() found no node for the saved id) and every
+    // terminal click resolved to an id not in `devices` - the loaded bench
+    // looked stale and dead. Capture first, swap second.
+    const freshId = entry.id;
+    const node = L.world.querySelector('.device[data-id="' + freshId + '"]') as HTMLElement | null;
+
+    L.netlist.removeDevice(freshId);
+    entry.id = d.id;
+    entry.model.id = d.id;
+    L.netlist.addDevice(entry.model);
+
+    if (node) node.dataset.id = d.id;
+
+    // Rotation is restored BEFORE any wire is drawn, so the first render
+    // already has the terminals where the wires expect them.
+    entry.rot = d.rot || 0;
+    if (node) L.applyRotationPublic(node, entry);
+  });
+
+  (data.wires || []).forEach((w) => {
+    L.wiring.add(w.aDev, w.aTerm, w.bDev, w.bTerm);
+  });
+
+  L._renderMeters();
+  L._sync();
+}
+
+/**
+ * Download a bench under a given name.
+ *
+ * This is the ONE save mechanism every browser supports, including Firefox
+ * and Zen, which do not implement the File System Access API at all. It is
+ * used directly as the save path on those browsers, and as the fallback
+ * wherever a folder write fails.
+ */
+function downloadBench(name: string, bench: BenchFile): void {
+  const safe = (name.trim() || 'bench').replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80);
+  const blob = new Blob([JSON.stringify(bench, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'eee-bench-' + Date.now() + '.json';
+  a.download = safe + '.json';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
-  toastMsg('Bench saved \u2713', 'ok');
+  a.remove();
+  // Revoke on a later tick: tearing the blob URL down synchronously can
+  // cancel the download before Firefox has started it.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function loadBench(): void {
+/** Download the current bench, timestamped. */
+function exportBench(): void {
+  const L = ensureLab();
+  if (!L.devices.length) { toastMsg('Nothing to save', 'warn'); return; }
+  downloadBench('eee-bench-' + Date.now(), captureBench());
+  toastMsg('Exported \u2713', 'ok');
+}
+
+/** Pick a JSON file and load it as the current bench. */
+function importBench(): void {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.json';
@@ -229,37 +318,9 @@ function loadBench(): void {
     reader.onload = () => {
       try {
         const data = JSON.parse(String(reader.result)) as BenchFile;
-        const L = ensureLab();
-        L.clear();
-
-        // Restore devices with their ORIGINAL ids, because the saved wires
-        // reference those ids. A fresh id would leave every wire pointing at
-        // a device that no longer exists and the whole bench silently dead.
-        data.devices.forEach((d) => {
-          const entry = L.place(d.kind, d.x, d.y);
-          if (!entry) return;
-
-          L.netlist.removeDevice(entry.id);
-          entry.id = d.id;
-          entry.model.id = d.id;
-          L.netlist.addDevice(entry.model);
-
-          const node = L.world.querySelector('.device[data-id="' + entry.id + '"]') as HTMLElement | null;
-          if (node) node.dataset.id = d.id;
-
-          // Restore rotation BEFORE any wire is drawn, so the first render
-          // already has the terminals in the right place.
-          entry.rot = d.rot || 0;
-          if (node) L.applyRotationPublic(node, entry);
-        });
-
-        (data.wires || []).forEach((w) => {
-          L.wiring.add(w.aDev, w.aTerm, w.bDev, w.bTerm);
-        });
-
-        L._renderMeters();
-        L._sync();
-        toastMsg('Bench loaded \u2713', 'ok');
+        restoreBench(data);
+        closeDrawer();
+        toastMsg('Bench imported \u2713', 'ok');
       } catch (err) {
         console.error(err);
         toastMsg('Invalid bench file', 'err');
@@ -269,6 +330,182 @@ function loadBench(): void {
   });
   input.click();
 }
+
+/* ────────────────────────────────────────────────────────────────
+   Bench library — real files in a folder you pick
+   ──────────────────────────────────────────────────────────────── */
+
+/** Escape a string for safe interpolation into innerHTML. */
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string
+  );
+}
+
+/** A listed bench plus the file it came from. */
+type DiskSlot = ServerBench;
+
+/** The last bench name used, so re-saving is one Enter key. */
+let lastName = '';
+
+/**
+ * Save the live bench to `<project>/benches/` on the machine running the
+ * dev server.
+ *
+ * The browser cannot write to disk, but the Vite server it is talking to can
+ * and does — that is the whole point of this path. No download prompt, no
+ * permission dialog. When the app is served by something WITHOUT the bench
+ * API (a plain static host), this falls back to a download so the button
+ * still does something useful.
+ */
+async function saveNamed(): Promise<void> {
+  const L = ensureLab();
+  if (!L.devices.length) { toastMsg('Nothing to save', 'warn'); return; }
+
+  const suggested = lastName || 'Exp ' + new Date().toISOString().slice(0, 10);
+  const name = window.prompt('Save experiment as:', suggested);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) { toastMsg('Name required', 'warn'); return; }
+
+  const bench = captureBench();
+
+  if (await apiAvailable()) {
+    try {
+      const out = await saveBenchToServer(trimmed, bench);
+      lastName = trimmed;
+      toastMsg('Saved ' + out.file + ' \u2713', 'ok');
+      void openBenchLibrary();
+      return;
+    } catch (err) {
+      console.error(err);
+      // The server may have restarted; re-probe before falling back so the
+      // next save does not wrongly take the download path.
+      resetAvailability();
+    }
+  }
+
+  downloadBench(trimmed, bench);
+  lastName = trimmed;
+  toastMsg('Saved \u201c' + trimmed + '.json\u201d to Downloads', 'ok');
+}
+
+/** Load a bench from the server onto the bench. */
+async function loadNamed(file: string): Promise<void> {
+  try {
+    // The library lists FILE NAMES (`Meow-1.json`), but the bench API takes a
+    // NAME and appends `.json` itself (`toFileName`). Passing the file name
+    // straight through asked the server for `Meow-1.json.json`, which does
+    // not exist - so every load from the drawer failed with ENOENT even
+    // though the file was sitting right there. Strip the extension here; the
+    // server re-adds exactly one.
+    const bench = await loadBenchFromServer(file.replace(/\.json$/i, ''));
+    restoreBench(bench);
+    lastName = file.replace(/\.json$/i, '');
+    closeDrawer();
+    toastMsg('Loaded \u201c' + file + '\u201d \u2713', 'ok');
+  } catch (err) {
+    console.error(err);
+    toastMsg('Could not load', 'err');
+  }
+}
+
+/** Render the bench library (server folder contents) into the drawer. */
+async function openBenchLibrary(): Promise<void> {
+  drawerTtl.textContent = 'Load Experiment';
+  drawer.classList.remove('hidden');
+
+  let html = '<div class="bl-actions">';
+  html += '<button class="bl-btn primary" data-bl="save"><i data-lucide="save" class="lucide-icon xs"></i> Save experiment</button>';
+  html += '<button class="bl-btn" data-bl="import"><i data-lucide="upload" class="lucide-icon xs"></i> Load from file</button>';
+  html += '</div>';
+
+  if (!(await apiAvailable())) {
+    html += '<p class="bl-empty">The bench server is not reachable, so saving falls back to a download.<br>' +
+            'Run <code>npm run dev</code> to save straight into the project folder.</p>';
+    drawerBody.innerHTML = html;
+    refreshIcons();
+    return;
+  }
+
+  let dir = '';
+  let slots: DiskSlot[] = [];
+  try {
+    const res = await listServerBenches();
+    dir = res.dir;
+    slots = res.benches;
+  } catch (err) {
+    console.error(err);
+    html += '<p class="bl-empty">Could not read the bench folder.</p>';
+    drawerBody.innerHTML = html;
+    refreshIcons();
+    return;
+  }
+
+  html += '<div class="bl-where">Saving to <strong>' + esc(dir) + '</strong></div>';
+
+  if (!slots.length) {
+    html += '<p class="bl-empty">No saved experiments yet.<br>Wire something up and hit <strong>Save experiment</strong>.</p>';
+  } else {
+    html += '<div class="bl-list">';
+    for (const s of slots) {
+      html += '<div class="bl-item" data-file="' + esc(s.file) + '">';
+      html += '<div class="bl-main">';
+      html += '<div class="bl-name">' + esc(s.name) + '</div>';
+      html += '<div class="bl-meta">' + s.devices + ' device' + (s.devices === 1 ? '' : 's') + ' \u00b7 ' +
+              s.wires + ' wire' + (s.wires === 1 ? '' : 's') + ' \u00b7 ' + ago(s.savedAt) + '</div>';
+      html += '</div>';
+      html += '<div class="bl-tools">';
+      html += '<button class="bl-ico" data-act="load" title="Load"><i data-lucide="folder-open" class="lucide-icon xs"></i></button>';
+      html += '<button class="bl-ico danger" data-act="delete" title="Delete"><i data-lucide="trash-2" class="lucide-icon xs"></i></button>';
+      html += '</div></div>';
+    }
+    html += '</div>';
+  }
+
+  drawerBody.innerHTML = html;
+  refreshIcons();
+}
+
+/** Delegate clicks inside the library drawer. */
+drawerBody.addEventListener('click', (e) => {
+  const target = e.target as HTMLElement;
+
+  const action = target.closest('[data-bl]') as HTMLElement | null;
+  if (action) {
+    const k = action.dataset.bl;
+    if (k === 'save') void saveNamed();
+    else if (k === 'import') importBench();
+    return;
+  }
+
+  const item = target.closest('.bl-item') as HTMLElement | null;
+  if (!item) return;
+  const file = item.dataset.file as string;
+
+  const tool = target.closest('[data-act]') as HTMLElement | null;
+  if (tool) {
+    const act = tool.dataset.act;
+    if (act === 'load') void loadNamed(file);
+    else if (act === 'delete') {
+      if (window.confirm('Delete ' + file + '?')) {
+        void (async () => {
+          try {
+            await deleteServerBench(file);
+            void openBenchLibrary();
+            toastMsg('Deleted', 'ok');
+          } catch (err) {
+            console.error(err);
+            toastMsg('Could not delete', 'err');
+          }
+        })();
+      }
+    }
+    return;
+  }
+
+  void loadNamed(file);
+});
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -320,8 +557,8 @@ el('kebab').addEventListener('click', (e) => {
   const k = btn.dataset.k;
   if (k === 'reference') renderRefList();
   else if (k === 'presets') { showLab(); }
-  else if (k === 'save') saveBench();
-  else if (k === 'load') loadBench();
+  else if (k === 'save') { showLab(); saveNamed(); }
+  else if (k === 'load') { showLab(); openBenchLibrary(); }
   else if (k === 'about') showAbout();
 });
 

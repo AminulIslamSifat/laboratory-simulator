@@ -127,9 +127,17 @@ export class Motor1P implements Machine {
       const NsyncRad = radOf(this.Nsync);
       const slipNow = (NsyncRad - this.omega) / NsyncRad;
       this.slip = Math.max(-0.5, Math.min(1, slipNow));
-      const s = Math.max(0.03, Math.abs(this.slip));
-      const pull = (Itot * Itot * 0.4) / s;
-      this.Te = Math.sign(this.slip || 1) * Math.min(pull, 20);
+
+      // Kloss curve, same shape as the 3-phase machine. A single-phase motor
+      // is weaker and its breakdown slip sits a little higher, so sb = 0.25.
+      // See motor-3p/model.ts for why the old `I^2/s` form was wrong.
+      const sb = 0.25;
+      const Tb = 2.0 * this.Irated;
+      const sAbs = Math.max(1e-3, Math.abs(this.slip));
+      const ratio = sAbs / sb + sb / sAbs;
+      const Tmag = (2 * Tb) / ratio;
+      this.Te = Math.sign(this.slip || 1) * Tmag;
+      if (!Number.isFinite(this.Te)) this.Te = 0;
     } else {
       this.Te = 0;
       this.slip = 1;

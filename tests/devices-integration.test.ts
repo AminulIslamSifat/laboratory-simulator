@@ -40,7 +40,7 @@ describe('rheostat across the variable DC rail', () => {
   function bench(): { sim: Simulator; psu: DCSupply; rh: Rheostat } {
     const nl = new Netlist();
     const psu = new DCSupply({ id: 'psu' });
-    const rh = new Rheostat({ id: 'rh', Rmax: 100, pos: 1 });
+    const rh = new Rheostat({ id: 'rh', Rmax: 100, posA: 1, posB: 1 });
     nl.addDevice(psu);
     nl.addDevice(rh);
 
@@ -61,9 +61,11 @@ describe('rheostat across the variable DC rail', () => {
 
     run(sim, 240);
 
-    // 250 V / 100.05 ohm
-    expect(ro(sim, 'rh', 'I')).toBeGreaterThan(2.4);
-    expect(ro(sim, 'rh', 'I')).toBeLessThan(2.6);
+    // 250 V / 100.05 ohm. The rheostat is a TWO-element device now - unit A
+    // (grey) carries the load here, so its own current is IA, not the retired
+    // single-element 'I'.
+    expect(ro(sim, 'rh', 'IA')).toBeGreaterThan(2.4);
+    expect(ro(sim, 'rh', 'IA')).toBeLessThan(2.6);
     expect(psu.rails.vdc.V).toBeGreaterThan(240);
   });
 
@@ -73,7 +75,7 @@ describe('rheostat across the variable DC rail', () => {
     psu.enabled = true;
     // vdcOn deliberately NOT set
     run(sim, 120);
-    expect(ro(sim, 'rh', 'I')).toBeCloseTo(0, 3);
+    expect(ro(sim, 'rh', 'IA')).toBeCloseTo(0, 3);
   });
 });
 
@@ -130,7 +132,7 @@ describe('single-phase transformer', () => {
     const nl = new Netlist();
     const psu = new DCSupply({ id: 'psu' });
     const tr = new Transformer({ id: 'tr' });
-    const rh = new Rheostat({ id: 'rh', Rmax: 500, pos: 1 });
+    const rh = new Rheostat({ id: 'rh', Rmax: 500, posA: 1, posB: 1 });
     nl.addDevice(psu);
     nl.addDevice(tr);
     nl.addDevice(rh);
@@ -241,7 +243,7 @@ describe('DC machine', () => {
     // ohm gives 1.17 A at standstill, and back-EMF pulls it lower as it
     // accelerates. This is the same arithmetic a student does when sizing a
     // starter box, and getting it wrong is supposed to trip the breaker.
-    const start = new Rheostat({ id: 'start', Rmax: 40, pos: 1 });
+    const start = new Rheostat({ id: 'start', Rmax: 40, posA: 1, posB: 1 });
     nl.addDevice(psu);
     nl.addDevice(m);
     nl.addDevice(start);
@@ -334,29 +336,27 @@ describe('three-phase induction motor', () => {
 /* ── meter rack ─────────────────────────────────────────────────── */
 
 describe('meter rack', () => {
-  it('bonds every post within one input bank', () => {
+  it('keeps each input line on its own net', () => {
     const nl = new Netlist();
     const rack = new MeterRack({ id: 'rack' });
     nl.addDevice(rack);
 
-    // A1, B1 and B2 are all the positive bank of display d1.
-    expect(nl.netOf('rack', 'A1')).toBe(nl.netOf('rack', 'B1'));
-    expect(nl.netOf('rack', 'B1')).toBe(nl.netOf('rack', 'B2'));
-    // R, D2, C and D are all its negative bank.
-    expect(nl.netOf('rack', 'R')).toBe(nl.netOf('rack', 'D'));
-    // Positives and negatives are different nets.
-    expect(nl.netOf('rack', 'A1')).not.toBe(nl.netOf('rack', 'R'));
+    // Row 1 is a three-line input bank: L1 L2 L3 with N on the right. Each
+    // line is its OWN node. Bonding them (as the old A1/B1/B2 bank did) would
+    // short all three phases together.
+    const nets = ['L1', 'L2', 'L3', 'N'].map((k) => nl.netOf('rack', k));
+    expect(new Set(nets).size).toBe(4);
   });
 
-  it('reads the voltage across its own display posts', () => {
+  it('reads line 1 against neutral on the d1 display', () => {
     const nl = new Netlist();
     const psu = new DCSupply({ id: 'psu' });
     const rack = new MeterRack({ id: 'rack' });
     nl.addDevice(psu);
     nl.addDevice(rack);
 
-    nl.addWire({ id: 'w1', a: 'psu:DC+50', b: 'rack:A1' });
-    nl.addWire({ id: 'w2', a: 'rack:R', b: 'psu:DC-50' });
+    nl.addWire({ id: 'w1', a: 'psu:DC+50', b: 'rack:L1' });
+    nl.addWire({ id: 'w2', a: 'rack:N', b: 'psu:DC-50' });
 
     psu.estop = false;
     psu.master = true;
@@ -366,9 +366,13 @@ describe('meter rack', () => {
     const sim = new Simulator(nl, 31);
     run(sim, 120);
 
-    const v = ro(sim, 'rack', 'd1');
+    // The three-line display reports one readout per line, keyed d1:L1..L3.
+    const v = ro(sim, 'rack', 'd1:L1');
     expect(v).toBeGreaterThan(45);
     expect(v).toBeLessThan(55);
+    // L2 and L3 are unconnected, so they sit at zero.
+    expect(Math.abs(ro(sim, 'rack', 'd1:L2'))).toBeLessThan(1);
+    expect(Math.abs(ro(sim, 'rack', 'd1:L3'))).toBeLessThan(1);
   });
 
   it('switches display mode without needing another solver step', () => {

@@ -5,9 +5,10 @@
  * bank (all posts inside one bank are the same electrical node, so a wire can
  * land on whichever button is handy), plus a V / A / W mode switch.
  *
- * The rack also carries ONE shared series shunt (in -> out). Watt mode
- * multiplies a channel's own voltage by that series current - a wattmeter is
- * a voltmeter times an ammeter.
+ * The rack also carries ONE shared series shunt, sensed between the row-1 N
+ * post (ground) and the row-3 leftmost (R) jack - matching the real panel.
+ * Watt mode multiplies a channel's own voltage by that series current - a
+ * wattmeter is a voltmeter times an ammeter.
  */
 
 import type { Device, Mna, NetOf, Readout, Solution } from '../../engine/types.js';
@@ -22,12 +23,23 @@ interface RackChannel {
   mode: 'V' | 'A' | 'W';
   pos: string[];
   neg: string[];
+  /**
+   * Three-phase voltmeter display.
+   *
+   * Row 1 of an AZ-VIPS bay is a three-line input bank: L1 L2 L3 with the
+   * neutral on the right. The panel shows all three line-to-neutral
+   * voltages at once, so this channel reads EVERY pos terminal against the
+   * single neg instead of picking the first one that resolves.
+   */
+  lines?: boolean;
   V: number;
   I: number;
   A: number;
   W: number;
   shown: number;
   over: boolean;
+  /** Per-line voltages when `lines` is set - [L1, L2, L3] against N. */
+  Vline?: number[];
 }
 
 export interface MeterRackOptions {
@@ -54,9 +66,11 @@ export class MeterRack implements Device {
   /** Terminal pairs the netlist must bond. See the constructor. */
   bonds: Array<[string, string]> = [];
 
-  /** The rack's single ammeter movement, shared by every display. */
-  seriesPos = ['in'];
-  seriesNeg = ['out'];
+  /** The rack's single ammeter movement, shared by every display.
+   *  On the real panel the current sense is taken between the row-1 N
+   *  post (ground) and the row-3 leftmost (R) jack. */
+  seriesPos = ['N'];
+  seriesNeg = ['R'];
 
   VRange: number;
   ARange: number;
@@ -73,12 +87,10 @@ export class MeterRack implements Device {
     this.id = opts.id ?? uid('rack');
     this.label = opts.label ?? 'Measurement Rack AZ-VIPS/VIDC';
 
-    // d1/d2 read the AZ-VIPS (Row 1 Bay 2) and MINS SCOPY (Row 1 Bay 3) posts.
-    // d3/d4 read the DIN meter bay's two painted jack pairs (Row 2 Bay 2):
-    //   top pair -> d3   bottom pair -> d4
-    // Each pair's top-left/top-right are pos and neg; the matching bottom-row
-    // post of the same column is bonded to it below, so a wire on ANY post of
-    // that colour closes the loop.
+    // d1/d2b are the two AZ-VIPS displays (Row 1 Bay 2 and Bay 4). They are
+    // identical modules, so they get identical banks — just on different
+    // jack names, because a device's terminals are one flat namespace.
+    // d2 reads the DIN meter bay's top jack pair, d3 the bottom pair.
     this.channels = [
       // The AZ-VIPS bay paints A1 B1 B2 D on the top row and R D2 C below.
       // Both rows are one node per column, so D belongs with the negatives -
@@ -86,11 +98,21 @@ export class MeterRack implements Device {
       // landed on it.
       {
         id: 'd1', label: 'AZ-VIPS', mode: 'V',
-        pos: ['A1', 'B1', 'B2'], neg: ['R', 'D2', 'C', 'D'],
+        pos: ['L1', 'L2', 'L3'], neg: ['N'], lines: true,
         V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
       },
+      // AZ-VIPS #2 (Row 1 Bay 4) — the mirrored twin. Same bank, same rules;
+      // the 'b' suffix is only because both bays live on one device and so
+      // share one terminal namespace.
       {
-        id: 'd2', label: 'MINS', mode: 'V',
+        id: 'd2b', label: 'AZ-VIPS 2', mode: 'V',
+        pos: ['L1b', 'L2b', 'L3b'], neg: ['Nb'], lines: true,
+        V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
+      },
+      // d2 was labelled 'MINS' but wired to DIN1± — it has always read the
+      // DIN meter bay, not the MINS SCOPY box. Label now matches the wire.
+      {
+        id: 'd2', label: 'DIN 1', mode: 'V',
         pos: ['DIN1+'], neg: ['DIN1-'],
         V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
       },
@@ -134,23 +156,26 @@ export class MeterRack implements Device {
       for (let i = 1; i < names.length; i++) B.push([names[0], names[i]]);
     };
     for (const c of this.channels) {
+      // A three-phase bank must NOT be chained: L1 L2 L3 are three separate
+      // lines, and bonding them would short all three phases into one node.
+      // The old pos list was redundant landings on ONE node, which is why
+      // chaining was right then and is wrong now.
+      if (c.lines) continue;
       chain(c.pos);
       chain(c.neg);
     }
     chain(this.seriesPos);
     chain(this.seriesNeg);
 
-    // Four jacks in a 2x2 layout on both bays. The rule: the TOP and BOTTOM
-    // posts of the SAME COLUMN are shorted - they are the same node, just two
-    // landings so a wire reaches whichever is closer.
-    //   AA bay  : col L = + (AA+/AA+2)    col R = - (AA-/AA-2)
-    //   DIN bay : col L = + (DIN1+/DIN2+) col R = - (DIN1-/DIN2-)
-    // d3 and d4 both tap the DIN bay, so they share these two nodes by design
-    // (the panel paints ONE jack pair for BOTH DIN meters).
+    // Every display is a SEPARATE instrument. The only bonds left are the
+    // redundant landings WITHIN one display's own jack pair:
+    //   AA bay : col L = + (AA+/AA+2), col R = - (AA-/AA-2)
+    //   DIN bay: d2 reads DIN1+/- and d3 reads DIN2+/- - INDEPENDENT pairs.
+    // The two DIN pairs used to be bonded (DIN1 is DIN2), which tied the top
+    // DIN meter to the bottom one. They are separate channels, so they must
+    // not share a node.
     B.push(['AA+', 'AA+2']);
     B.push(['AA-', 'AA-2']);
-    B.push(['DIN1+', 'DIN2+']);
-    B.push(['DIN1-', 'DIN2-']);
 
     this.VRange = opts.VRange ?? 500;
     this.ARange = opts.ARange ?? 20;
@@ -215,17 +240,12 @@ export class MeterRack implements Device {
       stampConductance(mna, a, b, g);
     };
 
-    // Every display presents a high-Z voltmeter. An A-mode channel does NOT
-    // stamp a shunt of its own: the DIN bay's two columns are bonded
-    // (DIN1 +/- is DIN2 +/- - the panel paints ONE jack pair for both DIN
-    // meters), so a per-channel 0.01 ohm shunt would sit directly across the
-    // neighbouring voltmeter's posts. That is 100 S straight across the
-    // mains - it shorted the supply and tripped the variable-AC breaker on
-    // three benches.
-    //
-    // The rack has ONE ammeter movement: the in/out series coil stamped
-    // below. An A-mode display is a readout of that coil, exactly like real
-    // gear.
+    // Every display presents a high-Z voltmeter, and an A-mode channel does
+    // NOT stamp a shunt of its own - it reads the rack's shared in/out series
+    // coil instead. That coil is the rack's ONE ammeter movement, stamped
+    // below; a display in A mode is a readout of it, exactly like real gear.
+    // (A per-channel 0.01 ohm shunt across a voltmeter pair would be 100 S
+    // straight across the mains and would trip the variable-AC breaker.)
     for (const c of this.channels) {
       const resolve = (names: string[]): number | undefined => {
         for (const name of names) {
@@ -235,7 +255,16 @@ export class MeterRack implements Device {
         }
         return undefined;
       };
-      put(resolve(c.pos), resolve(c.neg), 1 / 1e6);
+      if (c.lines) {
+        // Three-line display: EVERY line presents its own high-Z voltmeter
+        // against the shared neutral. `resolve(c.pos)` would return only the
+        // first line that happened to be wired, so L2 and L3 would read zero
+        // even with a live supply on them.
+        const n = resolve(c.neg);
+        for (const p of c.pos) put(resolve([p]), n, 1 / 1e6);
+      } else {
+        put(resolve(c.pos), resolve(c.neg), 1 / 1e6);
+      }
     }
 
     // Shared series shunt.
@@ -267,7 +296,26 @@ export class MeterRack implements Device {
       const b = resolve(c.neg);
       const vTrue = a !== undefined && b !== undefined ? (sol.V[a] ?? 0) - (sol.V[b] ?? 0) : 0;
       c.V = vTrue + sol.rng.gauss() * Math.abs(vTrue) * this.noise;
-      // The current half of every display is the rack's single series coil.
+      if (c.lines) {
+        // Each line against the shared neutral. The LCD shows all three at
+        // once, so the numbers have to be computed here, not picked one-per-
+        // channel by resolve().
+        const nNet = resolve(c.neg);
+        c.Vline = c.pos.map((p) => {
+          const pNet = resolve([p]);
+          const raw =
+            pNet !== undefined && nNet !== undefined
+              ? (sol.V[pNet] ?? 0) - (sol.V[nNet] ?? 0)
+              : 0;
+          return raw + sol.rng.gauss() * Math.abs(raw) * this.noise;
+        });
+        c.V = c.Vline[0] ?? c.V;
+      }
+      // The current half of every A-mode display is the rack's single series
+      // coil. The bench has ONE ammeter movement (the in/out shunt); every
+      // A-mode head is a readout of that movement, exactly like a real rack
+      // where several meters share one shunt. A display therefore shows the
+      // coil current regardless of which posts its own voltage inputs use.
       c.I = this.A;
       c.A = this.A;
       c.W = c.V * this.A;
@@ -284,13 +332,39 @@ export class MeterRack implements Device {
   }
 
   readouts(): Readout[] {
-    const out: Readout[] = this.channels.map((c) => ({
-      name: c.id,
-      label: `${c.label} · ${c.mode}`,
-      value: c.shown,
-      unit: c.mode === 'V' ? 'V' : c.mode === 'A' ? 'A' : 'W',
-      warn: c.over
-    }));
+    const out: Readout[] = [];
+    for (const c of this.channels) {
+      // A three-line display shows L1/L2/L3 ONLY in voltmeter mode. Pressing
+      // A or W reuses the same LCD for a single reading, exactly like the
+      // real AZ-VIPS: in V it is a three-phase voltmeter, in A a single
+      // ammeter, in W a single wattmeter. Emitting the line values in every
+      // mode was why the top display sat on voltages no matter which button
+      // was pressed.
+      if (c.lines && c.mode === 'V' && c.Vline) {
+        // Three-phase display: one readout per line, keyed `<id>:<terminal>`
+        // so the sprite's three data-live nodes each bind their own number.
+        //
+        // The terminal name comes from the CHANNEL (`c.pos`), NOT a hardcoded
+        // ['L1','L2','L3']. The second AZ-VIPS bay is wired to `L1b/L2b/L3b`
+        // and its sprite listens for exactly those names; keying the readout
+        // `d2b:L1` meant `byName.get('d2b:L1b')` never matched and the whole
+        // second display sat blank no matter how it was wired. d1 only worked
+        // because its terminals happen to be spelled the same as the literal.
+        const lines = c.pos;
+        c.Vline.forEach((v, i) => {
+          const ln = lines[i] ?? 'L' + (i + 1);
+          out.push({ name: `${c.id}:${ln}`, label: `${c.label} ${ln}`, value: v, unit: 'V', warn: c.over });
+        });
+        continue;
+      }
+      out.push({
+        name: c.id,
+        label: `${c.label} · ${c.mode}`,
+        value: c.shown,
+        unit: c.mode === 'V' ? 'V' : c.mode === 'A' ? 'A' : 'W',
+        warn: c.over
+      });
+    }
     out.push({ name: 'V', label: 'Rack voltage', value: this.V, unit: 'V', warn: this.vOver });
     out.push({ name: 'A', label: 'Rack current', value: this.A, unit: 'A', warn: this.aOver });
     return out;

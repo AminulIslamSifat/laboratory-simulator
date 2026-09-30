@@ -73,7 +73,17 @@ export class SyncGen implements Machine {
     this.Ra = opts.Ra ?? 2.2;
     this.Ke = opts.Ke ?? 0.55;
     this.J = opts.J ?? 0.05;
-    this.primeRpm = opts.primeRpm ?? 1500;
+    // A generator is DRIVEN - it must not spin on its own.
+    //
+    // This defaulted to 1500, so a lone GMS on the bench ran at synchronous
+    // speed with nothing coupled to its shaft and no field connected, and its
+    // armature produced EMF from nowhere. That is not a generator, it is a
+    // perpetual motion machine: the user asked, correctly, "who is giving it
+    // the power?" The answer was nobody - the model was. Default 0, like
+    // every other machine here. Speed arrives only from the coupling pass,
+    // when a motor is shafted to it; an explicit primeRpm still works for the
+    // bench-rig case where the GMS is the prime mover.
+    this.primeRpm = opts.primeRpm ?? 0;
     this.f = opts.f ?? 50;
     this.p = opts.p ?? 2;
     this.Vrated = opts.Vrated ?? 400;

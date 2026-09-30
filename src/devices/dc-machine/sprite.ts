@@ -40,18 +40,51 @@ export function spriteDCMachine() {
   s += txt(920, 322, 'GEN', { size: 16, weight: '700', anchor: 'end' });
   s += txt(920, 348, 'MOT', { size: 16, weight: '700', anchor: 'end' });
 
-  // ---- printed schematic: MG circle + series field winding ----
-  s += '<g stroke="#111" stroke-width="2.6" fill="none">';
-  s += '<path d="M 730 512 L 836 512 L 836 522"/>';
-  s += '<path d="M 730 592 L 836 592 L 836 582"/>';
-  s += '<path d="M 836 522 L 850 530 L 836 540 L 850 550 L 836 560 L 850 570 L 836 580 L 850 590 L 836 592"/>';
-  s += '<path d="M 866 472 L 866 512 L 836 512"/>';
-  s += '<path d="M 700 552 L 730 552"/>';
+  // ---- printed schematic: traced from motor.jpg ----
+  // Topology (verified against the reference photo):
+  //   A2  --(over the top)--> MG top brush
+  //   D3/D1 --[vertical commutating zigzag]--> rail --> up into A1 (upper centre)
+  //   A1  --(drop + switch/diode)--> MG left brush
+  //   D2 (lower centre) ----------> MG bottom brush
+  //   MG right brush --[vertical series zigzag]--> F1
+  //   F2  --(bottom return)--> rail
+  s += '<g stroke="#111" stroke-width="2.6" fill="none" stroke-linejoin="round" stroke-linecap="round">';
+  // NET 1: A2 -> MG TOP brush. A2 rises straight up on its own vertical,
+  // crosses the top on a dedicated rail, drops into the MG top brush.
+  s += '<path d="M 386 500 L 386 452 L 676 452 L 676 499"/>';
+  // NET 2: A1 -> MG BOTTOM brush. A1 is an ARMATURE terminal: it runs alone,
+  // clear of every other line, straight to the MG bottom brush. Nothing else
+  // rides this wire.
+  s += '<path d="M 536 520 L 536 520 L 640 520 L 640 605 L 676 605"/>';
+  // switch sits on its own stub off the A1 jack (kept as the plate draws it)
+  s += '<path d="M 536 520 L 576 520"/>';
+  s += '<circle cx="580" cy="520" r="5.5" fill="#111" stroke="none"/>';
+  s += '<path d="M 580 520 L 598 510"/>';
+  s += '<circle cx="606" cy="520" r="5.5" fill="#111" stroke="none"/>';
+  s += '<path d="M 606 520 L 626 520 L 626 552"/>';
+  // NET 3: D1 + D2 tied together, then through the left resistor.
+  // D3 drops to the node; D1 rises to the node; D2 drops to the node.
+  // This node is a SEPARATE net from A1/MG.
+  s += '<path d="M 379 558 L 420 558 L 420 596"/>';
+  s += '<path d="M 379 616 L 420 616 L 420 596"/>';
+  // node -> left resistor -> up into the A1 jack (D-branch termination)
+  s += '<path d="M 420 596 L 434 586 L 446 606 L 458 586 L 470 606 L 482 586 L 494 606 L 506 586 L 518 596"/>';
+  // resistor right end rises into A1's jack (536,520) — does NOT touch the MG
+  s += '<path d="M 518 596 L 518 520 L 536 520"/>';
+  // D2 (lower centre) ties DOWN into that D-node only
+  s += '<path d="M 536 588 L 536 596"/>';
+  // NET 4: F1 <-> F2 through the right resistor. One continuous chain:
+  // F1 down into the resistor top, zigzag, then out the bottom to F2.
+  s += '<path d="M 846 472 L 846 486"/>';
+  s += '<path d="M 846 486 L 858 496 L 846 506 L 858 516 L 846 526 L 858 536 L 846 546 L 858 556 L 846 566 L 846 574"/>';
+  s += '<path d="M 846 574 L 846 600 L 866 600"/>';
   s += '</g>';
   s += '<circle cx="676" cy="552" r="50" fill="#fafaf4" stroke="#111" stroke-width="3.2"/>';
   s += label(676, 546, 'MG', { size: 36, weight: '700', anchor: 'middle' });
   s += txt(676, 574, 'M / G', { size: 13, anchor: 'middle' });
-  s += '<circle cx="600" cy="552" r="12" fill="#b23b30" stroke="#111" stroke-width="2"/>';
+  // heavy brush bars on the MG circle (top + bottom), as on the plate
+  s += '<rect x="662" y="494" width="28" height="10" fill="#111"/>';
+  s += '<rect x="662" y="600" width="28" height="10" fill="#111"/>';
 
   // ---- banana jacks (positions + colours traced from the photo) ----
   // left column
@@ -60,10 +93,10 @@ export function spriteDCMachine() {
   s += jack(379, 558, 'red', 23);    s += label(346, 565, 'D3', { anchor: 'end', size: 20 });
   s += jack(379, 616, 'red', 23);    s += label(346, 623, 'D1', { anchor: 'end', size: 20 });
   // centre column: upper blank, lower = A1
-  s += jack(536, 520, 'red', 23);
-  s += jack(536, 588, 'red', 23);    s += label(536, 628, 'A1', { anchor: 'middle', size: 20 });
+  s += jack(536, 520, 'red', 23);    s += label(536, 500, 'A1', { anchor: 'middle', size: 20 });
+  s += jack(536, 588, 'red', 23);    s += label(536, 628, 'D2', { anchor: 'middle', size: 20 });
   // right-of-centre = D2
-  s += jack(640, 570, 'red', 23);    s += label(640, 628, 'D2', { anchor: 'middle', size: 20 });
+  s += jack(640, 570, 'red', 23);    s += label(640, 628, 'A1', { anchor: 'middle', size: 20 });
   // field
   s += jack(846, 472, 'black', 23);  s += label(874, 479, 'F1', { anchor: 'start', size: 20 });
   s += jack(866, 600, 'red', 23);    s += label(894, 607, 'F2', { anchor: 'start', size: 20 });

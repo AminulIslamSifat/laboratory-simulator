@@ -44,9 +44,9 @@ export class DCMachine implements Machine {
   readonly type = 'dc_machine';
   readonly label: string;
 
-  // An earlier build declared D3 but stamped and read a terminal named 'D2',
-  // so the series field (nameplate: D1-D2) stamped a net that did not exist
-  // while the real D2 jack stayed dead. Both are declared and both are used.
+  // Reference photo had A1/D2 labels swapped; corrected here. Upper centre
+  // jack is a shorted A1 tap (shares key 'A1' with the right jack, so both
+  // fold into one armature net via terminalsOf dedup). Lower centre = D2.
   // PE is the protective-earth jack the sprite paints in yellow. It carries
   // no current in this simulator — there is no global earth net to bond it
   // to — but it MUST be declared. The netlist only unions terminals a device

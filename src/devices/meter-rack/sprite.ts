@@ -65,7 +65,8 @@ export function spriteMeterRack(){
   s += spriteIWYBay_R4();
   s += spriteAZ68_R4();
   s += spriteAZ67_R4();
-  // bay 5 — blank panel
+  // bay 5 — blank. The real rack has no terminal here; current is sensed
+  // between the row-1 N post and the row-3 leftmost (R) jack instead.
   s += _rr(893,576,229,130,'#c8c8c2','#333',1);
   s += _screw(903,586)+_screw(1112,586)+_screw(903,696)+_screw(1112,696);
 
@@ -84,10 +85,23 @@ function spriteVIPSModule(){
   s += _tt(474,116,'AZ-VIPS',12,'700','#111','end');
   s += _rr(217,120,93,92,'#e0e0d8','#111',1.3,3);
   s += _rr(225,128,77,58,'#5aa8de','#0a2530',1);
-  // live readout + its unit; the V / A / W switch and the + / − input
-  // banks for this display live on the control strip (see spriteControlPanelA)
-  s += _lv(259,170,'d1',22);
-  s += _lu(297,180,'d1',12);
+  // Three live readouts, one per input line, stacked in the LCD. Row 1 is
+  // L1 L2 L3 against the neutral and the panel reports all three at once,
+  // so there are three bound value nodes here rather than one.
+  s += _tt(232,146,'L1',6,'700','#0a2530','start');
+  s += _tt(232,162,'L2',6,'700','#0a2530','start');
+  s += _tt(232,178,'L3',6,'700','#0a2530','start');
+  s += _lv(272,146,'d1:L1',13);
+  s += _lv(272,162,'d1:L2',13);
+  s += _lv(272,178,'d1:L3',13);
+  s += _lu(296,146,'d1:L1',8);
+  s += _lu(296,162,'d1:L2',8);
+  s += _lu(296,178,'d1:L3',8);
+  // Single-reading bindings for A and W modes. The same LCD is reused: in V
+  // it shows the three line voltages above, in A it shows one current, in W
+  // one power. Only one set is ever populated, so the other stays blank.
+  s += _lv(272,162,'d1',13);
+  s += _lu(296,162,'d1',8);
   s += _tt(415,124,'VOLTAGE MEASUREMENT',6,'700','#333');
   s += _tt(415,132,'TEMP -20/150C',5.5,'400','#333');
   s += _jack(330,155,8);
@@ -98,12 +112,24 @@ function spriteVIPSModule(){
   s += _cc(376,148,8,'#8a8a86','#000',1.2)+_cc(376,148,3.5,'#151515');
   s += _cc(402,148,8,'#8a8a86','#000',1.2)+_cc(402,148,3.5,'#151515');
   s += _cc(428,148,8,'#8a8a86','#000',1.2)+_cc(428,148,3.5,'#151515');
-  s += _tt(350,140,'A1',5.5,'400','#333')+_tt(376,140,'B1',5.5,'400','#333')+_tt(402,140,'B2',5.5,'400','#333')+_tt(428,140,'D',5.5,'400','#333');
-  s += _jack(350,170,7)+_jack(376,170,7)+_jack(402,170,7);
+  // Row 1 - the grey posts. These are the bay's INPUTS and its real
+  // terminals: L1 L2 L3 with N on the right, matching the bench. The four
+  // red jacks 22 ref px below are row 2, which the lab never uses, so they
+  // stay painted but carry no terminal.
+  s += _tt(350,140,'L1',5.5,'400','#333')+_tt(376,140,'L2',5.5,'400','#333')+_tt(402,140,'L3',5.5,'400','#333')+_tt(428,140,'N',5.5,'400','#333');
+  s += _jack(350,170,7)+_jack(376,170,7)+_jack(402,170,7)+_jack(428,170,7);
   s += _jack(350,208,7)+_jack(376,208,7)+_jack(402,208,7);
   s += _tt(350,222,'R',5.5,'400','#333')+_tt(376,222,'D',5.5,'400','#333')+_tt(402,222,'C',5.5,'400','#333');
   s += '<path d="M410,170 L440,170 L440,208 L410,208" stroke="#333" stroke-width="0.9" fill="none"/>';
   s += _tt(465,182,'VOLTAGE',5,'400','#333')+_tt(465,190,'REAL RANGE',4.5,'400','#333')+_tt(465,198,'AS HOLD',4.5,'400','#333');
+  // Mode-switch rocker strip, on ROW 1's band (ref y101..241) under the LCD.
+  // It must not go below ref y241 - that is the row separator, and putting
+  // the strip at y374 (as it first did) dropped the V/A/W buttons a whole row
+  // down onto the DIN meters.
+  s += _rr(222,214,84,20,'#3a3a38','#111',0.9,2);
+  s += _rr(228,217,22,14,'#5a5a56','#222',0.8,2);
+  s += _rr(258,217,22,14,'#5a5a56','#222',0.8,2);
+  s += _rr(288,217,22,14,'#5a5a56','#222',0.8,2);
   return s;
 }
 
@@ -122,11 +148,10 @@ function spriteSYNCSCOPY(){
   s += _rr(88,174,56,54,'#f4f4ee','#333',1.2,2);
   s += _cc(116,201,20,'#dcdcd4','#555',1.2);
   s += _cc(108,197,2.2,'#222')+_cc(124,197,2.2,'#222')+_cc(116,209,2.2,'#222');
-  // ALARM pair on right edge
-  s += _jack(183,160,8);
-  s += '<path d="M183,168 L183,175 L188,180 L178,186 L188,192 L183,198 L183,204" stroke="#333" stroke-width="0.9" fill="none"/>';
-  s += _jack(183,210,8);
-  s += _tt(160,182,'ALARM',5.5,'400','#333');
+  // The ALARM pair used to be drawn here as two bare jacks. Nothing in the
+  // model ever declared `ALARM`, so they were dead terminals — a wire landed
+  // on either resolved to no net. Removed rather than wired: the rack has no
+  // alarm node, and the bay reads as a clean SYNC SCOPY + outlet module.
   return s;
 }
 
@@ -159,26 +184,55 @@ function spriteMINSSCOPY(){
 }
 
 function spriteVIPS2(){
-  // ref bay x719..894 y101..241 — jack cluster + label only
+  // ref bay x719..894 y101..241 - AZ-VIPS #2.
+  //
+  // Same arrangement as Bay 2: monitor on the LEFT with its V/A/W strip
+  // under it, jack bank on the RIGHT. The old layout ran the jack bank
+  // straight through the middle of the monitor, so the first two columns of
+  // jacks were painted on top of the LCD and the whole bay read as a jumble.
+  //
+  // This bay is 175 ref px wide where Bay 2's is 273, so the bank cannot use
+  // Bay 2's 26px pitch beside a 93px monitor. The monitor drops to 80 and
+  // the bank pitch to 20 so both fit without touching.
   var s = '';
   s += _rr(719,101,175,140,'#ecece4','#333',1);
   s += _screw(729,112)+_screw(884,112)+_screw(729,230)+_screw(884,230);
   s += _tt(888,116,'AZ-VIPS',12,'700','#111','end');
-  s += _tt(805,124,'VOLTAGE MEASUREMENT',5.5,'700','#333');
-  s += _tt(805,132,'TEMP -20/150C',5,'400','#333');
-  s += _jack(748,155,8);
-  s += '<path d="M748,163 L748,172 L753,177 L743,183 L753,189 L748,195 L748,203" stroke="#333" stroke-width="0.9" fill="none"/>';
-  s += _jack(748,210,8);
-  s += _tt(780,185,'RAUDS',5.5,'400','#333');
-  s += _cc(775,148,8,'#8a8a86','#000',1.2)+_cc(775,148,3.5,'#151515');
-  s += _cc(800,148,8,'#8a8a86','#000',1.2)+_cc(800,148,3.5,'#151515');
-  s += _cc(825,148,8,'#8a8a86','#000',1.2)+_cc(825,148,3.5,'#151515');
-  s += _cc(850,148,8,'#8a8a86','#000',1.2)+_cc(850,148,3.5,'#151515');
-  s += _tt(775,140,'A1',5.5,'400','#333')+_tt(800,140,'B1',5.5,'400','#333')+_tt(825,140,'B2',5.5,'400','#333')+_tt(850,140,'D',5.5,'400','#333');
-  s += _jack(775,170,7)+_jack(800,170,7)+_jack(825,170,7);
-  s += _jack(775,208,7)+_jack(800,208,7)+_jack(825,208,7);
-  s += _tt(775,222,'R',5.5,'400','#333')+_tt(800,222,'D',5.5,'400','#333')+_tt(825,222,'C',5.5,'400','#333');
-  s += '<path d="M835,170 L865,170 L865,208 L835,208" stroke="#333" stroke-width="0.9" fill="none"/>';
+
+  // -- left: live display + mode-switch strip --
+  // Monitor 723..803, strip 200..220. The strip sits BELOW the monitor,
+  // never inside it, so the V/A/W buttons never cover the LCD.
+  s += _rr(723,120,80,72,'#e0e0d8','#111',1.3,3);
+  s += _rr(729,126,68,52,'#5aa8de','#0a2530',1);
+  // Same three-line stack as Bay 2, keyed on the 'b' bank.
+  s += _tt(732,140,'L1',5,'700','#0a2530','start');
+  s += _tt(732,154,'L2',5,'700','#0a2530','start');
+  s += _tt(732,168,'L3',5,'700','#0a2530','start');
+  s += _lv(765,140,'d2b:L1b',11);
+  s += _lv(765,154,'d2b:L2b',11);
+  s += _lv(765,168,'d2b:L3b',11);
+  s += _lu(789,140,'d2b:L1b',7);
+  s += _lu(789,154,'d2b:L2b',7);
+  s += _lu(789,168,'d2b:L3b',7);
+  // Single-reading bindings for A and W modes, same reuse rule as Bay 2.
+  s += _lv(765,154,'d2b',11);
+  s += _lu(789,154,'d2b',7);
+  s += _rr(723,200,80,20,'#3a3a38','#111',0.9,2);
+  s += _rr(728,203,22,14,'#5a5a56','#222',0.8,2);
+  s += _rr(758,203,22,14,'#5a5a56','#222',0.8,2);
+  s += _rr(788,203,22,14,'#5a5a56','#222',0.8,2);
+
+  // -- right: the A1 B1 B2 D / R D2 C binding bank --
+  // Columns at ref x 815 / 835 / 855 / 875, rows at ref y 170 / 208.
+  s += _cc(815,148,8,'#8a8a86','#000',1.2)+_cc(815,148,3.5,'#151515');
+  s += _cc(835,148,8,'#8a8a86','#000',1.2)+_cc(835,148,3.5,'#151515');
+  s += _cc(855,148,8,'#8a8a86','#000',1.2)+_cc(855,148,3.5,'#151515');
+  s += _cc(875,148,8,'#8a8a86','#000',1.2)+_cc(875,148,3.5,'#151515');
+  s += _tt(815,140,'L1',5.5,'400','#333')+_tt(835,140,'L2',5.5,'400','#333')+_tt(855,140,'L3',5.5,'400','#333')+_tt(875,140,'N',5.5,'400','#333');
+  s += _jack(815,170,7)+_jack(835,170,7)+_jack(855,170,7)+_jack(875,170,7);
+  s += _jack(815,208,7)+_jack(835,208,7)+_jack(855,208,7);
+  s += _tt(815,222,'R',5.5,'400','#333')+_tt(835,222,'D',5.5,'400','#333')+_tt(855,222,'C',5.5,'400','#333');
+  s += '<path d="M883,170 L891,170 L891,208 L883,208" stroke="#333" stroke-width="0.9" fill="none"/>';
   return s;
 }
 
@@ -227,19 +281,27 @@ function spriteDINMeters(){
   s += _tt(470,278,'AZ-VIDC',8,'700','#111','end');
   function meter(x0?: any, disp?: any) {
     var t = '';
-    t += _rr(x0,295,95,96,'#9a9a94','#333',1.2);
-    t += _rr(x0+6,301,83,18,'#5a5a56','#222',0.8);
-    t += _tt(x0+26,314,'ENTER',3.2,'400','#ddd');
-    t += _tt(x0+64,314,'CLEAR',3.2,'400','#ddd');
-    t += _rr(x0+6,323,83,50,'#3a3a38','#111',1);
-    t += _rr(x0+10,327,75,42,'#5aa8de','#0a2530',1);
-    t += _lv(x0+44,357,disp,16);
-    t += _lu(x0+66,364,disp,8);
-    t += _rr(x0+6,378,83,10,'#3a3a38','#111',0.8);
+    // Casing stops at ref y368 and the mode strip lives BELOW it (372..394).
+    // The strip used to be drawn at y374 while the casing ran to y391, so the
+    // V/A/W buttons sat half inside the meter body and covered the LCD.
+    // Width is 80 (was 95) so the two meters and the DIN jack column all
+    // fit without touching.
+    t += _rr(x0,288,80,80,'#9a9a94','#333',1.2);
+    t += _rr(x0+5,294,70,16,'#5a5a56','#222',0.8);
+    t += _tt(x0+22,306,'ENTER',3.2,'400','#ddd');
+    t += _tt(x0+56,306,'CLEAR',3.2,'400','#ddd');
+    t += _rr(x0+5,314,70,46,'#3a3a38','#111',1);
+    t += _rr(x0+9,318,62,38,'#5aa8de','#0a2530',1);
+    t += _lv(x0+38,346,disp,15);
+    t += _lu(x0+57,352,disp,8);
+    t += _rr(x0+5,372,70,22,'#3a3a38','#111',0.9,2);
+    for (var i = 0; i < 3; i++) {
+      t += _rr(x0+8+i*22,375,18,14,'#5a5a56','#222',0.8,2);
+    }
     return t;
   }
   s += meter(230, 'd3');
-  s += meter(333, 'd4');
+  s += meter(316, 'd4');
   s += _jack(440,290,8);
   s += _cc(462,290,8,'#151515','#000',1.2)+_cc(462,290,3.5,'#000');
   s += _rr(425,305,52,32,'#f4f4ee','#111',1);
@@ -249,6 +311,7 @@ function spriteDINMeters(){
   s += _cc(462,360,8,'#151515','#000',1.2)+_cc(462,360,3.5,'#000');
   s += _tt(440,283,'+',5,'700','#333')+_tt(462,283,'-',5,'700','#333');
   s += _tt(440,370,'-',5,'700','#333')+_tt(462,370,'-',5,'700','#333');
+
   return s;
 }
 
@@ -370,28 +433,6 @@ function spriteAZ67_R3(){
   return s;
 }
 
-function spriteBenchBay(){
-  // ref bay x893..1122 y576..706 — bench connections, 4 clickable term dots.
-  // Terms: V+, V- (left column), in, out (right column).
-  //   V+ / V-  : the voltmeter movement — d1's AZ-VIPS reads across these.
-  //   in / out : the shared series shunt — the rack's ammeter movement.
-  var s = '';
-  s += _rr(893,576,229,130,'#c8c8c2','#333',1);
-  s += _screws(893,576,229,130);
-  s += _tt(1008,596,'BENCH CONNECTIONS',7,'700','#333');
-  // left column — voltage posts
-  s += _jack(939,623,10)+_jack(939,672,10);
-  s += _tt(912,627,'V+',9,'700','#111','end')+_tt(912,676,'V\u2212',9,'700','#111','end');
-  // right column — series current posts
-  s += _jack(1020,623,10)+_jack(1020,672,10);
-  s += _tt(1046,627,'IN',9,'700','#111','start')+_tt(1046,676,'OUT',9,'700','#111','start');
-  // orange markers beside each jack (cue that these are the live binding posts)
-  s += _rr(927,634,24,3,'#e87820','none',0);
-  s += _rr(927,683,24,3,'#e87820','none',0);
-  s += _rr(1008,634,24,3,'#e87820','none',0);
-  s += _rr(1008,683,24,3,'#e87820','none',0);
-  return s;
-}
 
 function spriteIWYBay_R4(){
   // ref bay x289..479 — IWY switch + LETI/LOPS cluster with interconnect diagram

@@ -55,6 +55,8 @@ interface Rail {
   I: number;
   T: number;
   tripped: boolean;
+  /** A dead short dumped more energy than the contacts could take. */
+  exploded: boolean;
   /** Soft-start time constant, seconds. 0 for a tapped secondary. */
   tau: number;
   /** Seconds spent at or over the current limit. */
@@ -167,16 +169,16 @@ export class DCSupply implements Device {
     this.Imax = opts.Imax ?? 3.5;
 
     this.rails = {
-      vdc: { key: 'vdc', label: 'Variable DC', on: false, set: 0, V: 0, Vmax: 250, Imax: 3.5, trip: 4.2, I: 0, T: 25, tripped: false, tau: 0.25, overT: 0, tripDelay: 1.5 },
+      vdc: { key: 'vdc', label: 'Variable DC', on: false, set: 0, V: 0, Vmax: 250, Imax: 3.5, trip: 4.2, I: 0, T: 25, tripped: false, exploded: false, tau: 0.25, overT: 0, tripDelay: 1.5 },
       // The variable AC line feeds the 1φ motor in Exp 05, whose reference
       // observation records 3.5 A without the starting capacitor. A 2 A rail
       // tripped before the motor reached rated voltage, so the experiment
       // could never be performed. The panel prints this output in the 3–4 A
       // class.
-      vac: { key: 'vac', label: 'Variable AC 3φ', on: false, set: 0, V: 0, Vmax: 440, Imax: 4, trip: 4.5, I: 0, T: 25, tripped: false, tau: 0.35, f: 50, overT: 0, tripDelay: 1.5 },
-      f3p: { key: 'f3p', label: 'Fixed 3φ 400 V', on: false, set: 400, V: 400, Vmax: 400, Imax: 10, trip: 12, I: 0, T: 25, tripped: false, tau: 0, overT: 0, tripDelay: 2.0 },
-      d24: { key: 'd24', label: 'Fixed 6/12/24 V', on: false, set: 24, V: 24, Vmax: 24, Imax: 2, trip: 2.4, I: 0, T: 25, tripped: false, tau: 0, overT: 0, tripDelay: 2.0, tap: 24, taps: [6, 12, 24] },
-      d50: { key: 'd50', label: 'Fixed 50 V', on: false, set: 50, V: 50, Vmax: 50, Imax: 2, trip: 2.4, I: 0, T: 25, tripped: false, tau: 0, overT: 0, tripDelay: 2.0 }
+      vac: { key: 'vac', label: 'Variable AC 3φ', on: false, set: 0, V: 0, Vmax: 440, Imax: 4, trip: 4.5, I: 0, T: 25, tripped: false, exploded: false, tau: 0.35, f: 50, overT: 0, tripDelay: 1.5 },
+      f3p: { key: 'f3p', label: 'Fixed 3φ 400 V', on: false, set: 400, V: 400, Vmax: 400, Imax: 10, trip: 12, I: 0, T: 25, tripped: false, exploded: false, tau: 0, overT: 0, tripDelay: 2.0 },
+      d24: { key: 'd24', label: 'Fixed 6/12/24 V', on: false, set: 24, V: 24, Vmax: 24, Imax: 2, trip: 2.4, I: 0, T: 25, tripped: false, exploded: false, tau: 0, overT: 0, tripDelay: 2.0, tap: 24, taps: [6, 12, 24] },
+      d50: { key: 'd50', label: 'Fixed 50 V', on: false, set: 50, V: 50, Vmax: 50, Imax: 2, trip: 2.4, I: 0, T: 25, tripped: false, exploded: false, tau: 0, overT: 0, tripDelay: 2.0 }
     };
 
     this.railThermal = {
@@ -310,8 +312,16 @@ export class DCSupply implements Device {
 
     switch (id) {
       case 'master':
+        // The main isolator is the panel's ON/OFF. Closing it must ARM the
+        // supply, or the bench is dead until the user finds the green START
+        // button - every rail is gated on `enabled && master`, and nothing
+        // on the panel except START ever set `enabled`. So flipping the
+        // isolator on and then switching a rail on did nothing at all.
+        //
+        // Opening it still drops everything, which is the point of an
+        // isolator.
         this.master = Boolean(value);
-        if (!this.master) this.enabled = false;
+        this.enabled = this.master && !this.estop;
         break;
 
       case 'estop':
@@ -344,6 +354,10 @@ export class DCSupply implements Device {
         // closed.
         for (const k of Object.keys(R) as RailKey[]) {
           const r = R[k];
+          // An exploded rail is scrap. RESET clears a tripped breaker, not a
+          // vaporised contact — the rail stays dead until the bench is
+          // cleared or reloaded. This is the whole point of realism here.
+          if (r.exploded) continue;
           if (r.tripped) r.on = false;
           r.tripped = false;
           r.T = 25;
@@ -452,8 +466,35 @@ export class DCSupply implements Device {
         else if (fold < 0.85) delay = 0.5;   // solid overload
       }
 
-      if (!r.tripped && live) {
-        if (r.I > r.trip) {
+      // Burst detection keys off ACTUAL current, not the `live` flag.
+      // `live` is gated on the isolator (`master`); a bench whose isolator was
+      // never toggled still stamps the source open, so a short draws nothing
+      // and the burst block below would never be reached. r.I is the measured
+      // rail current — if it is pinned at the limit with a deep fold, that is
+      // a bolted fault regardless of how the panel got here.
+      if (!r.tripped) {
+        // ── burst ─────────────────────────────────────────────────
+        // A dead short does not wait for an inverse-time curve.
+        //
+        // The current gate here is deliberately NOT `I > Imax * k`. Fold-back
+        // clamps the rail AT Imax by design, so any threshold above Imax is
+        // unreachable — the same trap the trip comment above warns about, and
+        // one this branch fell into on its first cut. `I > Imax * 0.9` just
+        // asks "is this rail pinned at its limit", which fold-back guarantees
+        // on a short and which a light load never reaches.
+        //
+        // Depth of fold is what separates a bolted fault from a mild overload:
+        // a stiff short drags the regulated output toward zero, a mild overload
+        // barely dips it. No fault-impedance solve, no I²t integration.
+        const foldNow = this.V > 1 ? (this._Veff ?? this.V) / this.V : 1;
+        if (foldNow < 0.35 && r.I > r.Imax * 0.9) {
+          r.exploded = true;
+          r.tripped = true;
+          r.on = false;
+          th.dead = true;
+          th.smoke = 1;
+          this.warn = `${r.label} EXPLODED — bolted fault at ${foldNow.toFixed(2)}× output`;
+        } else if (r.I > r.trip) {
           r.tripped = true;
           r.on = false;
           this.warn = `${r.label} breaker tripped (overload)`;
@@ -481,6 +522,14 @@ export class DCSupply implements Device {
       this.railThermal.vdc.smoke,
       this.railThermal.vac.smoke
     );
+
+    // An exploded rail holds full smoke forever — it is not cooling down.
+    for (const k of Object.keys(R) as RailKey[]) {
+      if (R[k].exploded) {
+        this.smoke = 1;
+        break;
+      }
+    }
 
     // ── front-panel displays ──
     // Each ESAM shows one rail. V / A / F are all computed every frame so a
@@ -510,8 +559,40 @@ export class DCSupply implements Device {
     if (this.estop) {
       out.push({ name: 'ESTOP', label: 'EMERGENCY STOP', value: 'LATCHED', unit: '', warn: true });
     }
+
+    // LINE lamp state. Numeric 1/0 so the readout binder can treat it like any
+    // other value; the sprite's data-led node keys off it. "Live" means the
+    // main line is actually energised - enabled AND master closed AND no
+    // e-stop latch - which is the same gate every rail uses.
+    out.push({
+      name: 'lineLive',
+      label: 'LINE',
+      value: this.enabled && this.master && !this.estop ? 1 : 0,
+      unit: '',
+    });
     if (this.warn) {
       out.push({ name: 'WARN', label: 'Panel', value: this.warn, unit: '', warn: true });
+    }
+
+    // ── front-panel ESAM displays ──
+    //
+    // The sprite draws each ESAM with a `dispId` (`m1`, `m2` - see esam() in
+    // sprite.ts) and _lv()/_lu() emit the matching `data-live`/`data-live-unit`
+    // nodes. But this method only ever emitted rail-named readouts (`vdcV`,
+    // `vacV`, ...), so `byName.get('m1')` always missed and every ESAM on the
+    // panel sat blank no matter what the supply was doing. The channels
+    // themselves were always live (`update()` fills V/I/F and `shown` from the
+    // mode switch) - they were simply never published under the name the
+    // sprite listens for. Emit them here, keyed by channel id and carrying the
+    // mode's unit, exactly like the meter rack's d1/d2b.
+    for (const c of this.channels) {
+      out.push({
+        name: c.id,
+        label: c.label + ' · ' + c.mode,
+        value: c.shown,
+        unit: c.mode === 'V' ? 'V' : c.mode === 'A' ? 'A' : 'Hz',
+        warn: c.over,
+      });
     }
 
     out.push({ name: 'vdcV', label: 'VAR DC · V', value: R.vdc.V, unit: 'V', warn: R.vdc.tripped });

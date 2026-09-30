@@ -290,10 +290,43 @@ export class Wiring {
     return { x: devX + termX, y: devY + termY };
   }
 
+  /**
+   * Rebuild the wire SVG.
+   *
+   * ─── Why this is not just `innerHTML = s` any more ───
+   *
+   * The drag handler on a device called this on EVERY mousemove. Mousemove
+   * fires far faster than the display refreshes (100-1000 Hz on a decent
+   * mouse), and each call did two expensive things:
+   *
+   *   1. `pointOf()` for every endpoint - each one a `querySelector` plus
+   *      several `parseFloat` on `style.left/top/width/height`.
+   *   2. `innerHTML = s`, which makes the browser parse the whole SVG string,
+   *      destroy every previous path node, and build a fresh tree.
+   *
+   * Building an SVG subtree hundreds of times per second, while the garbage
+   * collector swept the old ones, is what pinned a core at ~200% for what is
+   * visually just one box sliding across the bench.
+   *
+   * Two changes fix it without touching the geometry:
+   *
+   *   - When the NUMBER of wires is unchanged, reuse the existing two `<path>`
+   *     nodes per wire and only set the `d` attribute. Setting an attribute is
+   *     a single style/layout input; replacing innerHTML re-parses and
+   *     re-creates the whole tree.
+   *   - Only fall back to a full rebuild when the count changes (a wire was
+   *     added or removed), which is the rare case.
+   *
+   * The wire order is stable (`this.wires` is only ever push/filter), so the
+   * i-th pair of nodes always belongs to the i-th wire.
+   */
   render(): void {
     const WIRE_COLORS = 6;
-    let s = '';
+    const layer = this.wireLayer as HTMLElement;
 
+    // Build the geometry first; both paths share it.
+    type Seg = { d: string; wc: number; wid: string };
+    const segs: Seg[] = [];
     this.wires.forEach((w, i) => {
       const a = this.pointOf(w.aDev, w.aTerm);
       const b = this.pointOf(w.bDev, w.bTerm);
@@ -313,13 +346,43 @@ export class Wiring {
         d = 'M ' + a.x + ' ' + a.y + ' C ' + mx + ' ' + a.y + ', ' + mx + ' ' + b.y + ', ' + b.x + ' ' + b.y;
       }
 
-      const wc = i % WIRE_COLORS;
-      s += '<path class="wireseg" data-wc="' + wc + '" d="' + d + '"/>';
-      s += '<path class="wirehit" data-wid="' + w.id + '" d="' + d +
-        '" fill="none" stroke="transparent" stroke-width="14" ' +
-        'style="pointer-events:stroke;cursor:pointer"/>';
+      segs.push({ d, wc: i % WIRE_COLORS, wid: w.id });
     });
 
-    (this.wireLayer as HTMLElement).innerHTML = s;
+    // Fast path: reuse the existing nodes when the wire SET is unchanged.
+    //
+    // Keyed on wire id, not on positional count. A positional match would
+    // drift the moment one wire is skipped for a frame (its device mid-drag
+    // with a missing endpoint): `segs` would drop it, the next frame's
+    // `segs` would put a DIFFERENT wire at that index, and the reused node
+    // would show the wrong wire's geometry. Matching by `data-wid` makes the
+    // node follow its own wire no matter how the visible set changes.
+    const existing = layer.children;
+    if (existing.length === segs.length * 2) {
+      let aligned = true;
+      for (let i = 0; i < segs.length; i++) {
+        const hit = existing[i * 2 + 1] as SVGPathElement;
+        if (hit.getAttribute('data-wid') !== segs[i].wid) { aligned = false; break; }
+      }
+      if (aligned) {
+        for (let i = 0; i < segs.length; i++) {
+          const seg = existing[i * 2] as SVGPathElement;
+          const hit = existing[i * 2 + 1] as SVGPathElement;
+          seg.setAttribute('d', segs[i].d);
+          hit.setAttribute('d', segs[i].d);
+        }
+        return;
+      }
+    }
+
+    // Slow path: the wire set changed. Rebuild once.
+    let s = '';
+    for (const seg of segs) {
+      s += '<path class="wireseg" data-wc="' + seg.wc + '" d="' + seg.d + '"/>';
+      s += '<path class="wirehit" data-wid="' + seg.wid + '" d="' + seg.d +
+        '" fill="none" stroke="transparent" stroke-width="14" ' +
+        'style="pointer-events:stroke;cursor:pointer"/>';
+    }
+    layer.innerHTML = s;
   }
 }

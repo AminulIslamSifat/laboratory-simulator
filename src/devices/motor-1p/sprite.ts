@@ -42,7 +42,7 @@ export function spriteAsyncMotor1P() {
   s += txt(560, 324, 'SINGLE-PHASE ASYNCHRONOUS MOTOR', { size: 14, weight: '700', anchor: 'middle' });
   s += txt(560, 341, 'MOTEUR ASYNCHRONE MONOPHASE', { size: 13, anchor: 'middle' });
   s += txt(560, 358, 'MOTORE ASINCRONO MONOFASE', { size: 13, anchor: 'middle' });
-  s += label(792, 372, 'mod. M-R/CV', { size: 14, weight: '700', anchor: 'middle' });
+  s += label(792, 348, 'mod. M-R/CV', { size: 14, weight: '700', anchor: 'middle' });
 
   // ---- theta symbol (bottom-left) ----
   s += txt(408, 470, 'θ', { size: 22, weight: '700', anchor: 'middle' });
@@ -53,18 +53,22 @@ export function spriteAsyncMotor1P() {
   s += jack(410, 490, 'red', 12);
 
   // ---- printed schematic ----
-  s += '<g stroke="#111" stroke-width="2.2" fill="none">' +
-    '<path d="M 445 420 L 445 438 L 460 438"/>' +
-    '<path d="M 515 420 L 515 438 L 520 438"/>' +
-    '<path d="M 520 528 L 640 528 L 690 490"/>' +
-    '<path d="M 690 490 L 720 490"/>' +
-    '<path d="M 690 535 L 690 555"/>' +
-    '<path d="M 625 412 L 660 412"/>' +
-    '<path d="M 700 412 L 765 412"/>' +
-    '</g>';
-  // capacitor symbol
-  s += '<line x1="672" y1="402" x2="672" y2="422" stroke="#111" stroke-width="2.6"/>';
-  s += '<line x1="690" y1="402" x2="690" y2="422" stroke="#111" stroke-width="2.6"/>';
+  // Z1/Z2 (top-left) wired DIRECTLY to the M circle; U1/U2 (bottom-right)
+  // wired DIRECTLY to M; the two red pins (top-right) bridged by a capacitor.
+  s += '<g stroke="#111" stroke-width="2.2" fill="none">';
+    // Z1 / Z2 -> M (each drops on its own vertical straight into the M circle)
+    s += '<path d="M 445 420 L 445 505 L 470 505"/>';   // Z1 -> M
+    s += '<path d="M 515 420 L 515 495 L 505 495"/>';   // Z2 -> M
+    // U1 / U2 -> M (bottom-right, each with its own line into the M circle)
+    s += '<path d="M 690 490 L 640 490 L 640 516 L 524 516"/>';   // U1 -> M
+    s += '<path d="M 690 555 L 660 555 L 660 548 L 524 548"/>';   // U2 -> M
+    // capacitor branch: red pin C -> cap -> red pin C2
+    s += '<path d="M 647 412 L 662 412"/>';
+    s += '<path d="M 700 412 L 743 412"/>';
+  s += '</g>';
+  // capacitor symbol (two parallel plates) between the two red pins
+  s += '<line x1="672" y1="398" x2="672" y2="426" stroke="#111" stroke-width="2.6"/>';
+  s += '<line x1="690" y1="398" x2="690" y2="426" stroke="#111" stroke-width="2.6"/>';
 
   // ---- M 1~ circle ----
   s += '<circle cx="486" cy="532" r="38" fill="#fafaf4" stroke="#111" stroke-width="3"/>';
@@ -81,14 +85,14 @@ export function spriteAsyncMotor1P() {
   s += jack(782, 530, 'yellow', 22); // PE
 
   // ---- printed labels ----
-  s += '<g transform="translate(410,378) rotate(-14)">' +
-    txt(0, 0, 'Aux2', { size: 18, weight: '700', anchor: 'middle' }) + '</g>';
+  // top-left pair: Z1 / Z2 (wired directly to M)
+  s += label(410, 378, 'Z1', { size: 16, anchor: 'middle' });
   s += label(548, 398, 'Z2', { size: 16, anchor: 'start' });
+  // top-right red pins C / C2 (bridged by the capacitor)
   s += label(625, 378, 'C', { size: 16, anchor: 'middle' });
-  s += label(468, 468, 'START', { size: 12, anchor: 'middle' });
-  s += label(468, 482, 'DEMARRAGE', { size: 11, anchor: 'middle' });
-  s += label(636, 482, 'RUN', { size: 12, anchor: 'end' });
-  s += label(636, 496, 'MARCHE', { size: 11, anchor: 'end' });
+  s += label(790, 378, 'C2', { size: 16, anchor: 'middle' });
+  // bottom-right pair: U1 / U2 (wired directly to M)
+  s += label(636, 482, 'U1', { size: 16, anchor: 'end' });
   s += label(712, 566, 'U2', { size: 17, anchor: 'start' });
   s += label(806, 537, 'PE', { size: 17, anchor: 'start' });
 

@@ -1,0 +1,57 @@
+{
+  "devices": [
+    {
+      "id": "power_supply_2_t15d",
+      "kind": "power_supply",
+      "x": 30,
+      "y": 30,
+      "rot": 0
+    },
+    {
+      "id": "single_phase_transformer_3_fxn5",
+      "kind": "single_phase_transformer",
+      "x": -457.6690838635634,
+      "y": 279.2716442087142,
+      "rot": 0
+    },
+    {
+      "id": "meter_rack_4_84gz",
+      "kind": "meter_rack",
+      "x": 30,
+      "y": 520,
+      "rot": 0
+    }
+  ],
+  "wires": [
+    {
+      "aDev": "power_supply_2_t15d",
+      "aTerm": "AC-L1",
+      "bDev": "meter_rack_4_84gz",
+      "bTerm": "in"
+    },
+    {
+      "aDev": "meter_rack_4_84gz",
+      "aTerm": "out",
+      "bDev": "single_phase_transformer_3_fxn5",
+      "bTerm": "P230"
+    },
+    {
+      "aDev": "single_phase_transformer_3_fxn5",
+      "aTerm": "P0",
+      "bDev": "power_supply_2_t15d",
+      "bTerm": "AC-N"
+    },
+    {
+      "aDev": "single_phase_transformer_3_fxn5",
+      "aTerm": "P0",
+      "bDev": "single_phase_transformer_3_fxn5",
+      "bTerm": "3U2"
+    },
+    {
+      "aDev": "meter_rack_4_84gz",
+      "aTerm": "L1",
+      "bDev": "single_phase_transformer_3_fxn5",
+      "bTerm": "P230"
+    }
+  ]
+}

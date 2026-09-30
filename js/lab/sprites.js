@@ -1841,8 +1841,8 @@ function spriteSinglePhaseTransformer() {
   // is what the 400 V / 230 V nameplate actually supports. Panel and solver
   // have to agree or a student measures one number and reads another.
   s += txt(700, 220, '53V',  { size: 22, weight: '700', anchor: 'middle' });
-  s += txt(700, 317, '94V',  { size: 22, weight: '700', anchor: 'middle' });
-  s += txt(700, 405, '53V',  { size: 22, weight: '700', anchor: 'middle' });
+  s += txt(700, 317, '147V', { size: 22, weight: '700', anchor: 'middle' });
+  s += txt(700, 405, '200V', { size: 22, weight: '700', anchor: 'middle' });
   s += txt(700, 590, '115V', { size: 22, weight: '700', anchor: 'middle' });
   s += txt(700, 665, '115V', { size: 22, weight: '700', anchor: 'middle' });
 

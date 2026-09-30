@@ -1,0 +1,91 @@
+{
+  "devices": [
+    {
+      "id": "power_supply_1_yjqq",
+      "kind": "power_supply",
+      "x": 394.26661100053184,
+      "y": 160.2180471999219,
+      "rot": 0
+    }
+  ],
+  "wires": [
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "DC+",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "DC+50"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "DC+",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "DC-50"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "DC-",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "DC+50"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "DC-",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "DC-50"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "DC+24",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "DC-24"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "3P-PE",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "3P-L4"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "3P-PE",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "3P-L3"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "3P-PE",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "3P-L2"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "3P-PE",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "3P-L1"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "AC-PE",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "AC-N"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "AC-PE",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "AC-L3"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "AC-PE",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "AC-L2"
+    },
+    {
+      "aDev": "power_supply_1_yjqq",
+      "aTerm": "AC-PE",
+      "bDev": "power_supply_1_yjqq",
+      "bTerm": "AC-L1"
+    }
+  ]
+}

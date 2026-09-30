@@ -90,6 +90,90 @@ export interface Preset {
   setup?: (lab: Lab) => void;
 }
 
+/* ────────────────────────────────────────────────────────────────
+   Motion tuning
+
+   A real 3-phase motor turns at 2820 rpm - 295 rad/s, about 47 turns a
+   second. No display shows that, and trying to is worse than not trying:
+   at 60 fps the rotor mark advances ~126 degrees per frame, so it does not
+   read as spinning, it strobes. Worse, the old code advanced the angle by a
+   fixed amount PER FRAME with no dt, so the same bench spun 2.4x faster on a
+   144 Hz screen than on a 60 Hz one.
+
+   The fix is to stop pretending the rotation is literal and make it
+   perceptual. A tanh saturates the visual speed: slow shafts turn at
+   something close to their true rate (so spin-up is legible), and anything
+   past OMEGA_REF converges on OMEGA_VIS_MAX - fast enough to read as
+   "spinning hard", slow enough that the mark never aliases. Blur and a drop
+   in opacity take over above the knee so a fast shaft looks like a swept
+   disc, which is exactly how a real shaft reads to the eye.
+   ──────────────────────────────────────────────────────────────── */
+
+/** Ceiling on visual angular speed (rad/s). 55 rad/s is ~53 deg/frame at
+ *  60 fps - fast, clearly turning, and comfortably under the aliasing edge. */
+const OMEGA_VIS_MAX = 55;
+
+/**
+ * Angular speed (rad/s) at which the visual rotation is ~76% of the ceiling.
+ *
+ * ABSOLUTE, deliberately NOT normalised per machine.
+ *
+ * Normalising by each machine's rated speed is the obvious-looking choice and
+ * it is wrong twice. It maps "at full load" to the SAME visual rate for every
+ * machine - a 2850 rpm motor and a 1250 rpm generator both land on 54.4 rad/s
+ * and become indistinguishable, which defeats the point of a lab that exists
+ * to show that one turns faster than the other. And it makes the visual speed
+ * disagree with the tachometer beside it: 50% of rated reads as full speed.
+ *
+ * An absolute reference keeps the mapping monotonic, so the faster shaft
+ * always reads as faster:
+ *
+ *   1250 rpm  (131 rad/s) -> 37.1 rad/s   35 deg/frame at 60 fps
+ *   2850 rpm  (298 rad/s) -> 52.4 rad/s   50 deg/frame at 60 fps
+ *
+ * Both comfortably under the ~180 deg/frame aliasing edge, and 15 rad/s
+ * apart - the two machines are visibly different at a glance.
+ *
+ * (The previous value, 80, saturated too early: it gave 51.0 vs 54.9 rad/s,
+ * a 7% difference that read as identical at a glance. Raising it to 160 is
+ * the whole fix; it is a retune of one number, not a new mechanism.)
+ */
+const OMEGA_REF = 160;
+
+/** Rotor speed (rad/s) above which a machine is considered running. */
+const OMEGA_RUNNING = 2;
+
+/** Peak motion blur, in CSS pixels at 100% zoom. */
+const BLUR_MAX_PX = 2.2;
+
+/**
+ * Rumble period bounds, seconds.
+ *
+ * RUMBLE_FAST is 0.075 s, about 13 Hz. That ceiling is not aesthetic: a 60 fps
+ * display can draw roughly 15 distinct positions per second, and past that the
+ * frames sample the animation at effectively random phases so the jitter reads
+ * as noise. The old floor of 0.04 s was 25 Hz - well past the point where a
+ * buzz is representable.
+ */
+const RUMBLE_SLOW = 0.13;
+const RUMBLE_FAST = 0.075;
+
+/**
+ * Rendered size, in px, of each front-panel control type.
+ *
+ * These MUST match the widths in assets/style.css (.pctl-toggle 22,
+ * .pctl-dial 30, .pctl-button 30). The layout x/y is the CENTRE of the
+ * painted knob, so the overlay's top-left has to be backed off by half the
+ * box. Reading it from one table here rather than guessing per call keeps
+ * the offset and the CSS from drifting apart.
+ */
+const CONTROL_SIZE: Record<string, number> = {
+  toggle: 22,
+  dial: 58,
+  select: 20,
+  button: 30
+};
+
 let _idc = 0;
 /** Monotonic, collision-free device id within a session. */
 function uid(p: string): string {
@@ -116,6 +200,13 @@ export class Lab {
   rafId: number | null = null;
   lastT = 0;
   smoke: unknown[] = [];
+
+  /**
+   * Seconds in the last simulated step. Read by the animation code so the
+   * rotor integrates at the same wall-clock rate regardless of frame rate.
+   * Seeded at 1/60 so a redraw outside the loop still has a sane step.
+   */
+  _animDt = 1 / 60;
 
   /** Pan / zoom. `k` is scale; `x`/`y` are the world translate. */
   view = { x: 0, y: 0, k: 1 };
@@ -183,6 +274,9 @@ export class Lab {
     this._reset();
     this.wiring.clear();
     this.world.querySelectorAll('.device').forEach((n) => n.remove());
+    // Plumes are keyed by device id and would otherwise outlive the bench,
+    // since _renderSmoke only sweeps them while the loop is running.
+    (this.smokeLayer as HTMLElement).querySelectorAll('[data-smoke]').forEach((n) => n.remove());
     this.titleEl.textContent = 'Laboratory \u00b7 Empty Bench';
     this._renderMeters();
     this._sync();
@@ -269,11 +363,23 @@ export class Lab {
     const pad = 60;
     const rect = this.surface.getBoundingClientRect();
     const vw = rect.width || 900, vh = rect.height || 600;
+
+    // The palette is a FLOATING overlay: 16px in from the left, 210px wide,
+    // z-index 20, sitting on top of the bench. Centring against the full
+    // surface width therefore parked the left edge of the bench UNDERNEATH
+    // it - a device placed there had its whole left column (the AEG switches
+    // on the power supply) unreachable, because every click landed on the
+    // palette instead. Centre into the strip that is actually visible: to the
+    // right of the palette, with the same 16px gutter it uses on the left.
+    const PALETTE_INSET = 16 + 210 + 16; // left gutter + panel width + gap
+    const availX = PALETTE_INSET;
+    const availW = Math.max(200, vw - PALETTE_INSET);
+
     const wW = (maxX - minX) + pad * 2;
     const wH = (maxY - minY) + pad * 2;
-    const k = Math.min(1.2, Math.min(vw / wW, vh / wH));
+    const k = Math.min(1.2, Math.min(availW / wW, vh / wH));
     this.view.k = k;
-    this.view.x = (vw - (maxX - minX) * k) / 2 - minX * k;
+    this.view.x = availX + (availW - (maxX - minX) * k) / 2 - minX * k;
     this.view.y = (vh - (maxY - minY) * k) / 2 - minY * k;
     this._applyView();
   }
@@ -360,7 +466,7 @@ export class Lab {
         case 'async_motor_1p':           return new Motor1P({ id });
         case 'sync_gen':                 return new SyncGen({ id });
         case 'single_phase_transformer': return new Transformer({ id });
-        case 'rheostat':                 return new Rheostat({ id, tA: 'A_TOP', tB: 'A_BOT' });
+        case 'rheostat':                 return new Rheostat({ id });
         case 'power_supply':             return new DCSupply({ id, pos: 'DC+', neg: 'DC-' });
         case 'meter_rack':               return new MeterRack({ id });
         case 'load_bank':                return new LoadBank({ id });
@@ -374,7 +480,7 @@ export class Lab {
     }
   }
 
-  place(kind: string, x?: number, y?: number): DeviceEntry | null {
+  place(kind: string, x?: number, y?: number, rot?: number): DeviceEntry | null {
     const reg: EquipmentEntry | undefined = EQUIPMENT[kind];
     if (!reg) return null;
 
@@ -410,7 +516,13 @@ export class Lab {
       // angle - the panel art is axis-aligned and a 37-degree motor just looks
       // broken. `w`/`h` stay the NATIVE unrotated size; the visual rotation is
       // a CSS transform and the wire layer compensates in pointOf().
-      rot: 0
+      //
+      // The rotation is taken AT PLACEMENT so _renderDevice can apply it in
+      // the same pass. A preset that set entry.rot AFTER place() returned
+      // rendered the sprite upright, because place() had already drawn it -
+      // which is why a rotated motor still stood vertical and its shaft never
+      // met the coupling.
+      rot: rot || 0
     };
 
     this.devices.push(entry);
@@ -449,11 +561,27 @@ export class Lab {
       // 24px so they are easy to grab.
       const w = t.mech ? 24 : (t.tight ? 12 : 20);
       const h = t.mech ? 24 : (t.tight ? 12 : 20);
+      // Width and height MUST be set here, not left to the stylesheet.
+      // `.term` in style.css declares width:20px/height:20px, and a property
+      // the inline style does not set comes from the stylesheet. The centring
+      // maths below uses `w` (12px for a tight dot), so a 20px CSS box landed
+      // with its centre at (x+4, y+4): every tight terminal on the rack was
+      // drawn 4px down-right of its declared position, and the oversized
+      // boxes overlapped into a blob. Setting both here makes this code the
+      // one source of truth for the box, so the maths and the element agree.
+      dot.style.width = w + 'px';
+      dot.style.height = h + 'px';
       dot.style.left = (t.x - w / 2) + 'px';
       dot.style.top = (t.y - h / 2) + 'px';
       dot.title = t.k;
       el.appendChild(dot);
     });
+
+    // Honour a rotation the caller set before render. A preset that rotates
+    // a machine (e.g. turning the 3φ motor so its bottom-mounted shaft faces
+    // the coupling) sets entry.rot right after place(); without this the
+    // sprite rendered upright and the mechanical ports did not line up.
+    this._applyRotation(el, entry);
 
     // Meter-display mode switches. SVG cannot take clicks reliably under the
     // world transform, so these are HTML overlays exactly like the terminals.
@@ -481,8 +609,15 @@ export class Lab {
       if (c.options) ctl.dataset.options = c.options.join(',');
       if (c.unit) ctl.dataset.unit = c.unit;
       ctl.title = c.title || c.id;
-      ctl.style.left = c.x + 'px';
-      ctl.style.top = c.y + 'px';
+      // Centre the control on its layout coordinate, exactly like the term
+      // dots above. The layout x/y is the middle of the painted knob, but
+      // the CSS sizes differ per type (toggle 22px, dial 30px, button 30px)
+      // and the element's origin is its TOP-LEFT. Placing that corner on the
+      // centre pushed every control half its own size down and right, which
+      // is why the switches sat off their painted breakers.
+      const cs = CONTROL_SIZE[c.type] ?? 22;
+      ctl.style.left = (c.x - cs / 2) + 'px';
+      ctl.style.top = (c.y - cs / 2) + 'px';
       el.appendChild(ctl);
     });
 
@@ -573,6 +708,20 @@ export class Lab {
       this._renderMeters();
     };
 
+    // Seed each dial's current value from the model, so its first drag starts
+    // from the real position instead of assuming 0. Without this a dial whose
+    // model default is non-zero (the rheostat starts at pos=0.5) jumps on the
+    // first pixel of movement.
+    const seeds: Record<string, number> = {};
+    const m = entry.model as Device & { posA?: number; posB?: number };
+    if (typeof m.posA === 'number') seeds.posA = m.posA;
+    if (typeof m.posB === 'number') seeds.posB = m.posB;
+    el.querySelectorAll('.pctl-dial').forEach((c) => {
+      const ctl = c as HTMLElement;
+      const id = ctl.dataset.ctl as string;
+      if (ctl.dataset.value == null && seeds[id] != null) ctl.dataset.value = String(seeds[id]);
+    });
+
     el.addEventListener('click', (e: MouseEvent) => {
       const ctl = (e.target as HTMLElement).closest('.pctl') as HTMLElement | null;
       if (!ctl) return;
@@ -615,9 +764,23 @@ export class Lab {
 
       const move = (ev: MouseEvent): void => {
         const span = max - min;
-        val = sv + ((sy - ev.clientY) / k) * (span / 200);
+        // Full sweep over ~150px of drag (was 200px at span/200), so a narrow
+        // range like the rheostat's 0..1 pos is still comfortable to wind.
+        //
+        // Shift = FINE. The variac covers 0-440 V in 150 px, so ~2.9 V per
+        // pixel; in a short-circuit test the current is proportional to that
+        // voltage and a single-pixel nudge jumps tens of amps and trips the
+        // breaker before the operating point can be found. Holding Shift
+        // scales the travel by 0.1 (0.29 V/px), which makes the 0-15 V SC
+        // range landable by hand.
+        const fine = ev.shiftKey ? 0.1 : 1;
+        val = sv + (((sy - ev.clientY) / k) * (span / 150)) * fine;
         val = Math.max(min, Math.min(max, val));
-        val = Math.round(val * 10) / 10;
+        // Quantise to 1/1000 of the range, not a fixed 0.1. A hard-coded 0.1
+        // step collapsed a 0..1 dial to just 11 positions and made small
+        // movements snap to the extremes.
+        const step = span / 1000;
+        val = Math.round(val / step) * step;
         ctl.dataset.value = String(val);
         push(ctl, val);
       };
@@ -650,6 +813,26 @@ export class Lab {
       const ox = entry.x, oy = entry.y;
       let moved = false;
 
+      // Coalesce wire redraws to one per animation frame.
+      //
+      // `mousemove` fires far faster than the display refreshes - easily 500+
+      // times a second on a high-polling mouse - so calling `wiring.render()`
+      // directly in the handler redrew the wire layer several times per visible
+      // frame. The geometry only needs to be correct ONCE per frame: the
+      // browser is going to composite once anyway, and no intermediate position
+      // is ever seen. Schedule at most one render per rAF and let the rest of
+      // the mousemove burst collapse into it.
+      let rafPending = false;
+      const scheduleRender = (): void => {
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => {
+          rafPending = false;
+          if (!moved) return;   // a click that never dragged needs no redraw
+          this.wiring.render();
+        });
+      };
+
       const move = (ev: MouseEvent): void => {
         if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 3) moved = true;
         // Divide the screen delta by zoom so the device tracks the cursor at
@@ -658,12 +841,14 @@ export class Lab {
         entry.y = oy + (ev.clientY - sy) / k;
         el.style.left = entry.x + 'px';
         el.style.top = entry.y + 'px';
-        this.wiring.render();
+        scheduleRender();
       };
       const up = (): void => {
         window.removeEventListener('mousemove', move);
         window.removeEventListener('mouseup', up);
-        if (moved) this._snapCoupling(entry);
+        // One final render so the wire lands on the exact drop position, in
+        // case the last mousemove's rAF had not fired yet.
+        if (moved) { this.wiring.render(); this._snapCoupling(entry); }
       };
       window.addEventListener('mousemove', move);
       window.addEventListener('mouseup', up);
@@ -774,8 +959,23 @@ export class Lab {
       const el = this.world.querySelector('.device[data-id="' + entry.id + '"]') as HTMLElement | null;
       if (el) el.dataset.id = d.id;
 
+      // Re-add only wires whose OTHER end still exists.
+      //
+      // The undo record was snapshotted when the device was deleted. Between
+      // then and the Ctrl+Z, the opposite device may itself have been removed
+      // (or the bench cleared), and re-adding such a wire resurrects a
+      // dangling connection pointing at an id no longer in `this.devices`.
+      // That is what produced ghost wires like `_5` -> `_6` in saved files:
+      // a floating node the solver then warns about, rendered to a terminal
+      // that does not exist. Check both ends against the live device list.
       if (d.wires && d.wires.length) {
-        d.wires.forEach((w) => this.wiring.add(w.aDev, w.aTerm, w.bDev, w.bTerm));
+        const live = new Set(this.devices.map((dev) => dev.id));
+        live.add(d.id); // the device we just re-placed
+        d.wires.forEach((w) => {
+          if (live.has(w.aDev) && live.has(w.bDev)) {
+            this.wiring.add(w.aDev, w.aTerm, w.bDev, w.bTerm);
+          }
+        });
       }
       this._renderMeters();
       this._sync();
@@ -1115,15 +1315,28 @@ export class Lab {
     this.lastT = now;
     if (dt > 0.1) dt = 0.1;          // clamp after a tab switch
     if (dt <= 0) dt = 1 / 60;
+    this._animDt = dt;
 
     try {
       // Energise supplies before stepping. The supply model boots with every
       // rail off behind an open isolator, so a preset is otherwise a
       // correctly-wired dead bench.
+      //
+      // ONLY `enabled`. Do not force `master` here: `master` is the isolator
+      // toggle and the user owns it. Stomping it every frame made the panel
+      // switch dead — the user flipped the isolator off and the loop silently
+      // flipped it back on, so nothing could be turned off or changed.
       this.devices.forEach((d) => {
         const m = d.model as Device & { type?: string; enabled?: boolean };
         if (m.type === 'dc_supply') m.enabled = true;
       });
+
+      // Re-check for a bolted fault every frame, not just on wire changes:
+      // the user may wire DC+ to DC- first and only then switch the rail on,
+      // in which case no _sync() fires after the rail goes live. This is a
+      // net lookup per supply — trivial, and it is the only path that can
+      // see a short the solver is blind to.
+      this._detectBoltedFaults();
 
       const sol = this.sim.step(dt);
 
@@ -1167,21 +1380,134 @@ export class Lab {
       const el = this.world.querySelector('.device[data-id="' + d.id + '"]') as HTMLElement | null;
       if (!el) return;
 
-      const ros = this.sim.readoutsFor(d.id);
+      // Prefer the simulator snapshot (all consumers agree within a frame).
+      // Fall back to the model's own readouts() when the bench is idle, so
+      // solution-independent values like the rheostat's resistance still show
+      // live even before the bench is energised.
+      let ros = this.sim.readoutsFor(d.id);
+      if (!ros.length && typeof d.model.readouts === 'function') {
+        try { ros = d.model.readouts(); } catch { ros = []; }
+      }
       const byName = new Map<string, Readout>();
       ros.forEach((r) => byName.set(r.name, r));
 
       el.querySelectorAll('[data-live]').forEach((node) => {
         const key = node.getAttribute('data-live') as string;
         const r = byName.get(key);
-        if (!r) return;
+        // Blank the node when its readout is absent this frame. A three-line
+        // display swaps its bindings when the mode changes (V shows
+        // `d1:L1..L3`, A/W shows the single `d1`), so the nodes that are not
+        // in the active set MUST be cleared - skipping them left the old
+        // voltage sitting on screen after pressing A or W.
+        if (!r) { (node as Element).textContent = ''; return; }
         const v = typeof r.value === 'number' ? formatReading(r.value) : r.value;
         (node as Element).textContent = String(v);
       });
       el.querySelectorAll('[data-live-unit]').forEach((node) => {
         const key = node.getAttribute('data-live-unit') as string;
         const r = byName.get(key);
-        if (r) (node as Element).textContent = r.unit || '';
+        (node as Element).textContent = r ? (r.unit || '') : '';
+      });
+
+      // Slide each unit's wiper slider to match its model position (0..1).
+      // The rheostat paints each handle at the TOP of its track; pos=0 keeps
+      // it there and pos=1 sends it to the bottom, so R rises as it drops.
+      // data-wiper="A" follows posA, data-wiper="B" follows posB.
+      const rh = d.model as Device & { posA?: number; posB?: number };
+      if (typeof rh.posA === 'number' || typeof rh.posB === 'number') {
+        const track = 170; // viewBox units of travel (y=150..320)
+        el.querySelectorAll('[data-wiper]').forEach((g) => {
+          const which = (g as Element).getAttribute('data-wiper');
+          const pos = which === 'B' ? rh.posB : rh.posA;
+          if (typeof pos !== 'number') return;
+          const dy = Math.max(0, Math.min(1, pos)) * track;
+          (g as Element).setAttribute('transform', 'translate(0 ' + dy.toFixed(1) + ')');
+        });
+      }
+
+      // Rotate any knob bound to a live control value.
+      //
+      // data-angle="<controlId>" marks a rotatable group. The control's range
+      // (min..max on the .pctl-dial overlay) maps onto a 270-degree sweep
+      // centred on straight-up, so min sits at -135deg and max at +135deg -
+      // the travel a real single-turn knob has. The group's own centre is
+      // parsed back out of its existing transform, which the sprite wrote as
+      // `rotate(0 cx cy)`, so no extra data has to be attached to the node.
+      el.querySelectorAll('[data-angle]').forEach((g) => {
+        const key = (g as Element).getAttribute('data-angle') as string;
+        const ctl = el.querySelector('.pctl-dial[data-ctl="' + key + '"]') as HTMLElement | null;
+        if (!ctl) return;
+        const min = Number(ctl.dataset.min || 0);
+        const max = Number(ctl.dataset.max || 100);
+        // Read the DEMAND from the model, not `dataset.value` and not the
+        // live output.
+        //
+        //  · `dataset.value` is rewritten every frame by the reflection block
+        //    below, so reading it here would snap the knob back the moment the
+        //    user let go.
+        //  · The live output (`V`) is gated on the rail being switched on, so
+        //    on a stopped bench it is always 0 and the knob could never show
+        //    where it was wound.
+        // `set` is the winding itself - exactly what a variac knob's position
+        // means - and it survives the rail being off, which is what a physical
+        // knob does too.
+        const railKey = key === 'vacV' ? 'vac' : key === 'vdcV' ? 'vdc' : null;
+        const rail = railKey
+          ? (d.model as Device & { rails?: Record<string, { set: number } | undefined> }).rails?.[railKey]
+          : undefined;
+        const val = rail && typeof rail.set === 'number' ? rail.set : Number(ctl.dataset.value || 0);
+        const frac = max > min ? Math.max(0, Math.min(1, (val - min) / (max - min))) : 0;
+        const deg = -135 + 270 * frac;
+        // Read cx/cy from the existing transform so the pivot is the knob's
+        // own centre, wherever the sprite placed it.
+        const cur = (g as Element).getAttribute('transform') || '';
+        const m = /rotate\(\s*[\d.-]+\s+([\d.-]+)\s+([\d.-]+)\s*\)/.exec(cur);
+        const cx = m ? m[1] : '0';
+        const cy = m ? m[2] : '0';
+        (g as Element).setAttribute('transform', 'rotate(' + deg.toFixed(1) + ' ' + cx + ' ' + cy + ')');
+      });
+
+      // Indicator lamps: data-led="<readoutName>" lights when the readout is
+      // truthy.
+      //
+      // `byName` is built from the SIMULATOR SNAPSHOT when the bench is
+      // running, and that snapshot carries electrical readings only - it never
+      // includes `model.readouts()`. A switch-state readout like `lineLive` is
+      // therefore absent from `byName` on exactly the running bench where the
+      // lamp matters. So the lamp is keyed off the model's own fields, which
+      // are the same three flags the rails are gated on. That makes the lamp
+      // agree with the hardware by construction instead of by coincidence.
+      const lampModel = d.model as Device & { enabled?: boolean; master?: boolean; estop?: boolean };
+      const lineLit = !!lampModel.enabled && !!lampModel.master && !lampModel.estop;
+      el.querySelectorAll('[data-led]').forEach((node) => {
+        const key = (node as Element).getAttribute('data-led') as string;
+        let lit = false;
+        // The sprite marks the LINE lamp with data-led="line". Match that
+        // exact key - the readout is named `lineLive`, but the DOM marker is
+        // `line`, and keying the handler off the readout name instead of the
+        // marker left the lamp reading `byName.get('lineLive')`, finding
+        // nothing on the snapshot, and painting dark forever.
+        if (key === 'line') {
+          lit = lineLit;
+        } else {
+          const r = byName.get(key);
+          lit = !!(r && Number(r.value) >= 1);
+        }
+        (node as Element).setAttribute('fill', lit ? '#ff4d4d' : '#3a1a1a');
+      });
+
+      // Throw the AEG breaker handles. data-aeg="<controlId>" tags each pole;
+      // the matching .pctl-toggle carries the on/off state. ON lifts the
+      // handle by the travel the sprite baked into data-aeg-travel, OFF drops
+      // it back to its base. This is what makes the switch read as a switch.
+      el.querySelectorAll('[data-aeg]').forEach((g) => {
+        const key = (g as Element).getAttribute('data-aeg') as string;
+        const ctl = el.querySelector('.pctl-toggle[data-ctl="' + key + '"]') as HTMLElement | null;
+        const on = !!ctl && ctl.classList.contains('on');
+        const base = Number((g as Element).getAttribute('data-aeg-base') || 0);
+        const travel = Number((g as Element).getAttribute('data-aeg-travel') || 0);
+        const dy = on ? -travel : 0;
+        (g as Element).setAttribute('transform', 'translate(0 ' + (base * 0 + dy).toFixed(1) + ')');
       });
 
       // Reflect panel control state back onto the overlays.
@@ -1223,20 +1549,95 @@ export class Lab {
         });
       }
 
-      // Spin any rotor marked data-spin="1". The group carries a
-      // transform-origin in SVG coords, so we only supply the rotation.
+      // Spin any rotor marked data-spin="1".
+      //
+      // The pivot is named in the sprite as transform-origin="x y" and is read
+      // from there - it is the single source of truth for where the shaft is.
+      // The transform function takes it as its rotation centre, and the CSS
+      // transform-origin property is pinned to 0 0 in style.css. Only ONE of
+      // those may resolve to the pivot: transform-origin is a presentation
+      // attribute for the CSS property, so when both applied the rotation
+      // composed about (2x, 2y) - a phantom point a thousand user units off
+      // the panel. The mark orbited the bench instead of turning on its shaft.
       const spinners = el.querySelectorAll('[data-spin]');
       if (spinners.length) {
-        const omega = typeof model.omega === 'number' ? model.omega : 0;
-        // Accumulate angle so slow rotors still visibly turn.
-        d._spinAngle = (d._spinAngle || 0) + omega * 0.05;
+        const omega = typeof model.omega === 'number' ? Math.abs(model.omega) : 0;
+
+        // Perceptual rate, not literal. See the tuning block above.
+        const frac = Math.tanh(omega / OMEGA_REF); // 0..1
+        const visOmega = OMEGA_VIS_MAX * frac;
+
+        // Integrate by SECONDS, not frames. This is what makes a 144 Hz
+        // screen show the same rotation as a 60 Hz one.
+        d._spinAngle = (d._spinAngle || 0) + visOmega * this._animDt;
         if (!isFinite(d._spinAngle)) d._spinAngle = 0;
-        const deg = ((d._spinAngle * 180) / Math.PI) % 360;
+        // Wrap so a bench left running for an hour does not lose precision.
+        d._spinAngle %= Math.PI * 2;
+        const deg = (d._spinAngle * 180) / Math.PI;
+
+        // Motion blur, converted out of the sprite's coordinate system.
+        //
+        // A blur radius is in USER UNITS, and the sprites draw on the reference
+        // photo's pixel grid (896 wide for the 3-phase motor) scaled down into
+        // the panel's 360 px box. Writing the screen-space number straight into
+        // blur() understated it by the viewBox scale AND by the bench zoom: the
+        // old blur(1.4px) landed at 0.56 screen px at 100% zoom and less as you
+        // zoomed out, which is why a full-speed rotor showed no blur at all.
+        // Convert explicitly, and quantise so the filter is not re-rasterised
+        // for sub-pixel drift.
+        const svgEl = el.querySelector('svg') as SVGSVGElement | null;
+        const vbW = svgEl && svgEl.viewBox ? svgEl.viewBox.baseVal.width : 0;
+        const userPerPx = vbW > 0 && d.w > 0 ? vbW / d.w : 1;
+        const zoom = this.view.k > 0 ? this.view.k : 1;
+        const blurPx = BLUR_MAX_PX * Math.max(0, (frac - 0.45) / 0.55);
+        const blurUser = Math.round((blurPx * userPerPx) / zoom / 0.05) * 0.05;
+        const blurAttr = blurUser >= 0.25 ? 'blur(' + blurUser.toFixed(2) + 'px)' : '';
+
+        // A fast shaft reads as a swept disc: a little dimmer than a static
+        // one, but not a ghost. The old -45% took a full-speed rotor down to
+        // half opacity, so "spinning fast" looked like "fading out".
+        const op = 1 - frac * 0.15;
+
         spinners.forEach((g) => {
-          const ox = g.getAttribute('transform-origin') || '0 0';
-          g.setAttribute('transform', 'rotate(' + deg.toFixed(2) + ' ' + ox.replace(/\s+/g, ' ') + ')');
+          const ox = (g.getAttribute('transform-origin') || '0 0').trim().replace(/\s+/g, ' ');
+          g.setAttribute('transform', 'rotate(' + deg.toFixed(2) + ' ' + ox + ')');
+          const gs = (g as SVGElement).style;
+          if (gs.filter !== blurAttr) gs.filter = blurAttr;
+          gs.opacity = op < 0.995 ? op.toFixed(3) : '';
         });
+
+        // Rumble: a running machine is never perfectly still. The period
+        // shortens with speed, so idle is dead-still and full speed is a tight
+        // buzz rather than a lazy sway.
+        if (omega > OMEGA_RUNNING) {
+          const dur = RUMBLE_SLOW - frac * (RUMBLE_SLOW - RUMBLE_FAST);
+          el.style.setProperty('--rumble-dur', dur.toFixed(3) + 's');
+          el.classList.add('rumble');
+        } else {
+          el.classList.remove('rumble');
+        }
       }
+
+      // Thermal tint. Between ambient and Tmax the casing warms up; past Tmax
+      // the smoke and the flashing readouts take over, so this stays subtle.
+      const th = (d.model as Device & { thermal?: { T: number; Tamb: number; Tmax: number } }).thermal;
+      if (th && Number.isFinite(th.T)) {
+        const span = th.Tmax - th.Tamb;
+        const heat = span > 0 ? Math.max(0, Math.min(1, (th.T - th.Tamb) / span)) : 0;
+        if (heat > 0.04) {
+          el.style.setProperty('--heat', heat.toFixed(3));
+          el.classList.add('hot');
+        } else {
+          el.classList.remove('hot');
+        }
+      }
+
+      // Flash any reading the model flagged as an overload, the way a real
+      // meter blinks its OL indicator.
+      el.querySelectorAll('[data-live]').forEach((node) => {
+        const r = byName.get(node.getAttribute('data-live') as string);
+        (node as Element).classList.toggle('live-warn', !!(r && r.warn));
+      });
     });
   }
 
@@ -1245,6 +1646,7 @@ export class Lab {
   _renderMeters(): void {
     if (!this.devices.length) {
       this.meterList.innerHTML = '<p class="meter-empty">No devices on the bench yet.</p>';
+      this._syncMeterOverflow();
       return;
     }
 
@@ -1276,6 +1678,26 @@ export class Lab {
 
     this.meterList.innerHTML = html;
     refreshIcons();
+    this._syncMeterOverflow();
+  }
+
+  /**
+   * Toggle the fade hint on the sidebar when its list actually overflows.
+   *
+   * The list owns the scroll (see `.meter-list` in style.css); this only
+   * decides whether to show the gradient that says "there is more below".
+   * Without it the fade would sit over an empty gap on a two-device bench
+   * and look like a rendering bug.
+   */
+  _syncMeterOverflow(): void {
+    const el = this.meterList;
+    // +1 absorbs sub-pixel rounding, so a list that is exactly full does not
+    // flash a fade on and off every frame.
+    const over = el.scrollHeight > el.clientHeight + 1;
+    // The panel is the list's parent (`.lab-meters`), derived here rather
+    // than taken as another dep — the list is already handed in, and the
+    // parent is the only element the fade pseudo-class hangs off.
+    el.parentElement?.classList.toggle('scrollable', over);
   }
 
   private _onMeterClick(e: MouseEvent): void {
@@ -1302,6 +1724,71 @@ export class Lab {
   /* ═════════════ status / sync / smoke ═════════════ */
 
   /**
+   * Detect a bolted fault — a supply whose own output terminals have been
+   * wired together.
+   *
+   * This CANNOT be detected in the solver. `collectSources()` resolves a
+   * supply's `pos` and `neg` to nets, and when a wire unions them the two
+   * nets are identical, so it skips the source entirely (`if (p === q)
+   * continue`). No source stamped means no current, which means fold-back
+   * never sees a short and the burst branch is unreachable. A dead short is
+   * DEFINED by `p === q`, so the solver is structurally blind to it.
+   *
+   * The fault has to be caught here, on the topology, where the wiring is
+   * still visible. A supply whose `pos` and `neg` land on the same net while
+   * the rail is live is a bolted fault: mark the rail exploded, kill the
+   * thermal, and let the smoke/burst renderer take it from there.
+   *
+   * Runs only on topology change (`_sync`), so it costs nothing per frame.
+   */
+  private _detectBoltedFaults(): void {
+    const netOf = (id: string, term: string) => this.netlist.netOf(id, term);
+
+    // Each rail's own output pair, as stamped by `refreshRails()`. The main
+    // variable-DC source is not an aux line, so it is listed here explicitly
+    // alongside the aux rails. Every entry is a source whose two terminals
+    // being unioned means a bolted fault across THAT rail.
+    const RAIL_PAIRS: Array<{ key: string; pos: string; neg: string; label: string }> = [
+      { key: 'vdc', pos: 'DC+',    neg: 'DC-',    label: 'Variable DC' },
+      { key: 'vac', pos: 'AC-L1',  neg: 'AC-N',  label: 'Variable AC' },
+      { key: 'f3p', pos: '3P-L1',  neg: '3P-PE', label: 'Fixed 3φ 400 V' },
+      { key: 'd24', pos: 'DC+24',  neg: 'DC-24', label: 'Fixed 6/12/24 V' },
+      { key: 'd50', pos: 'DC+50',  neg: 'DC-50', label: 'Fixed 50 V' }
+    ];
+
+    for (const d of this.devices) {
+      const m = d.model as Device & {
+        type?: string;
+        rails?: Record<string, { on: boolean; tripped: boolean; exploded: boolean; V: number; Imax: number }>;
+        warn?: string;
+        smoke?: number;
+      };
+      if (m.type !== 'dc_supply' || !m.rails) continue;
+
+      for (const pair of RAIL_PAIRS) {
+        const r = m.rails[pair.key];
+        if (!r || r.exploded) continue;
+
+        // Live and commanded above a token voltage. An off/tripped/zero rail
+        // is not a fault.
+        if (!r.on || r.tripped || r.V <= 0.5) continue;
+
+        const p = netOf(d.id, pair.pos);
+        const q = netOf(d.id, pair.neg);
+        // Same net = a wire bridges this rail's own output. That is the
+        // bolted fault the solver cannot see.
+        if (p === undefined || q === undefined || p !== q) continue;
+
+        r.exploded = true;
+        r.tripped = true;
+        r.on = false;
+        m.smoke = 1;
+        m.warn = pair.label + ' EXPLODED — output shorted (bolted fault)';
+      }
+    }
+  }
+
+  /**
    * Push the drawn wires into the netlist so the solver actually sees them.
    *
    * Wiring stores `{aDev, aTerm, bDev, bTerm}`; the netlist wants
@@ -1318,6 +1805,7 @@ export class Lab {
       this.netlist.wires.set(id, { id, a, b });
     });
     this.netlist.invalidate();
+    this._detectBoltedFaults();
 
     const n = this.devices.length;
     const w = this.wiring.wires.length;
@@ -1341,21 +1829,181 @@ export class Lab {
     this.statusEl.className = 'meter-foot' + (cls ? ' ' + cls : '');
   }
 
+  /**
+   * Overheat smoke.
+   *
+   * Built ONCE per smoking machine, then animated entirely by CSS. The old
+   * version assigned `layer.innerHTML` on every frame, which recreated every
+   * puff element 60 times a second - and replacing an element restarts its CSS
+   * animation from the first keyframe, so the plumes were pinned at
+   * scale(.6)/opacity(.5) for as long as the machine smoked. The smoke was not
+   * slow, it was frozen solid.
+   *
+   * Reusing the group and writing only --smoke (density) and the group
+   * transform is what lets the animation actually run. Both are compared
+   * against the current value first, so a steady machine writes nothing.
+   *
+   * The group is keyed by device id, so three hot machines keep three
+   * independent plumes and a removed device's plume is swept up next frame.
+   */
   private _renderSmoke(): void {
-    let s = '';
+    const layer = this.smokeLayer as HTMLElement;
+    const want = new Set<string>();
+
     this.devices.forEach((d) => {
-      const th = (d.model as Device & { thermal?: { smoke: number } }).thermal;
-      if (!th || !th.smoke) return;
-      const cx = d.x + d.w / 2;
-      const cy = d.y + 20;
-      const n = Math.ceil(th.smoke * 5);
-      for (let i = 0; i < n; i++) {
-        const off = (i - n / 2) * 11;
-        s += '<circle class="smoke-puff" cx="' + (cx + off) + '" cy="' + cy +
-          '" r="' + (6 + i) + '" style="animation-delay:' + (i * 0.22) + 's"/>';
+      // A burst fires ONCE, on the frame the flag flips. Checked BEFORE the
+      // smoke early-return below: `smoke` may be 0 on a device that has only
+      // just exploded (the supply stores its smoke on `model.smoke` and on
+      // each rail's thermal, not on `model.thermal`), so gating the burst
+      // behind a non-zero smoke level meant a fresh explosion rendered
+      // nothing at all. The burst is its own signal and must not depend on
+      // the plume's density.
+      const ex = this._deviceExploded(d.model);
+      if (ex && !layer.querySelector('[data-burst="' + d.id + '"]')) {
+        this._spawnBurst(d);
       }
+
+      const th = (d.model as Device & { thermal?: { smoke: number } }).thermal;
+      const raw = th && Number.isFinite(th.smoke) ? th.smoke : 0;
+      const level = Math.max(0, Math.min(1, raw));
+      if (level <= 0.01) return;
+
+      want.add(d.id);
+      let g = layer.querySelector('[data-smoke="' + d.id + '"]') as SVGGElement | null;
+
+      if (!g) {
+        const NS = 'http://www.w3.org/2000/svg';
+        g = document.createElementNS(NS, 'g');
+        g.setAttribute('class', 'smoke-group');
+        g.setAttribute('data-smoke', d.id);
+
+        // Six puffs with deliberately unequal drift, size, period and phase.
+        // Evenly spaced puffs of equal size read as a row of circles, not as
+        // smoke. dx/dur/size/delay are the only free parameters; the vertical
+        // rise is derived from dx so a puff that drifts far also rises far.
+        const PUFFS: Array<[number, number, number, number]> = [
+          [-6, 2.9, 7, 0.00],
+          [4, 2.4, 9, 0.45],
+          [-1, 3.3, 6, 0.90],
+          [8, 2.7, 10, 1.35],
+          [-9, 3.6, 8, 1.80],
+          [2, 3.0, 5, 2.25]
+        ];
+        // `g` is re-bound below the forEach, and TypeScript drops a narrowing
+        // across a closure boundary for a `let`. Hold the built group in a
+        // const so the narrowing survives into the loop.
+        const group = g;
+        PUFFS.forEach(([dx, dur, size, delay]) => {
+          const c = document.createElementNS(NS, 'circle');
+          c.setAttribute('class', 'smoke-puff');
+          c.setAttribute('r', String(size));
+          c.style.setProperty('--dx', dx + 'px');
+          c.style.setProperty('--dy', (-46 - Math.abs(dx) * 5) + 'px');
+          c.style.setProperty('--dur', dur + 's');
+          c.style.setProperty('--delay', delay + 's');
+          group.appendChild(c);
+        });
+        layer.appendChild(group);
+      }
+
+      // Position and density: the only things that change per frame.
+      const next = 'translate(' + (d.x + d.w / 2).toFixed(1) + ' ' + (d.y + 18).toFixed(1) + ')';
+      if (g.getAttribute('transform') !== next) g.setAttribute('transform', next);
+      const lvl = level.toFixed(2);
+      if (g.style.getPropertyValue('--smoke') !== lvl) g.style.setProperty('--smoke', lvl);
     });
-    (this.smokeLayer as HTMLElement).innerHTML = s;
+
+    // Sweep up plumes whose machine stopped smoking or left the bench.
+    layer.querySelectorAll('[data-smoke]').forEach((n) => {
+      const id = n.getAttribute('data-smoke') as string;
+      if (!want.has(id)) n.remove();
+    });
+
+    // Bursts are permanent while the device is on the bench — a wreck does
+    // not clean itself up. Only a removed device takes its debris with it.
+    const live = new Set(this.devices.map((d) => d.id));
+    layer.querySelectorAll('[data-burst]').forEach((n) => {
+      const id = n.getAttribute('data-burst') as string;
+      if (!live.has(id)) n.remove();
+    });
+  }
+
+  /**
+   * One-shot burst: a white-hot flash, a ring, and debris shards.
+   *
+   * Built on the frame the supply reports `exploded`, then left alone. All
+   * motion is CSS keyframe; the only JS is the initial DOM. The stage gets a
+   * short shake via a class that removes itself on animationend.
+   */
+  private _spawnBurst(d: { id: string; x: number; y: number; w: number; h: number }): void {
+    const NS = 'http://www.w3.org/2000/svg';
+    const layer = this.smokeLayer as HTMLElement;
+    const g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'burst-group');
+    g.setAttribute('data-burst', d.id);
+    g.setAttribute('transform', 'translate(' + (d.x + d.w / 2).toFixed(1) + ' ' + (d.y + d.h / 2).toFixed(1) + ')');
+
+    // Flash disc.
+    const flash = document.createElementNS(NS, 'circle');
+    flash.setAttribute('class', 'burst-flash');
+    flash.setAttribute('r', '18');
+    g.appendChild(flash);
+
+    // Expanding shock ring.
+    const ring = document.createElementNS(NS, 'circle');
+    ring.setAttribute('class', 'burst-ring');
+    ring.setAttribute('r', '10');
+    g.appendChild(ring);
+
+    // Ten shards at uneven angles/radii — even spacing reads as a pattern.
+    for (let i = 0; i < 10; i++) {
+      const sh = document.createElementNS(NS, 'rect');
+      sh.setAttribute('class', 'burst-shard');
+      sh.setAttribute('width', '2.4');
+      sh.setAttribute('height', '1.2');
+      sh.style.setProperty('--ba', (i * 36 + (i % 3) * 11) + 'deg');
+      sh.style.setProperty('--bd', (26 + (i % 4) * 9) + 'px');
+      sh.style.setProperty('--bdel', ((i % 5) * 0.02) + 's');
+      g.appendChild(sh);
+    }
+
+    layer.appendChild(g);
+
+    const stage = document.querySelector('.lab-stage');
+    if (stage) {
+      stage.classList.remove('bench-shake');
+      // Reflow so re-adding the class restarts the animation.
+      void (stage as HTMLElement).offsetWidth;
+      stage.classList.add('bench-shake');
+      stage.addEventListener('animationend', () => stage.classList.remove('bench-shake'), { once: true });
+    }
+
+    if (this.toast) this._toast('💥 Short circuit — the rail is gone', 'err');
+  }
+
+  /**
+   * Is this device currently in the exploded state?
+   *
+   * The flag lives in two places depending on device family: a supply exposes
+   * a per-rail `exploded` (surfaced as a top-level boolean once any rail has
+   * blown) and also mirrors it on `model.smoke`. Machines carry `thermal.dead`.
+   * Check all of them so a burst is never missed because the renderer looked
+   * at the wrong field.
+   */
+  private _deviceExploded(model: unknown): boolean {
+    const m = model as {
+      exploded?: boolean;
+      thermal?: { dead?: boolean };
+      rails?: Record<string, { exploded?: boolean }>;
+    };
+    if (m.exploded === true) return true;
+    if (m.thermal && m.thermal.dead === true) return true;
+    if (m.rails) {
+      for (const r of Object.values(m.rails)) {
+        if (r && r.exploded === true) return true;
+      }
+    }
+    return false;
   }
 
   private _toastT: ReturnType<typeof setTimeout> | undefined;
@@ -1373,6 +2021,11 @@ export class Lab {
   /** Wire the meter-panel delete buttons. Called once by the boot code. */
   bindMeterPanel(): void {
     this.meterList.addEventListener('click', (e: MouseEvent) => this._onMeterClick(e));
+    // The sidebar is pinned top/bottom on desktop and max-height on mobile,
+    // so a window resize changes how much of the list is visible. Re-check
+    // the fade hint when that happens.
+    window.addEventListener('resize', () => this._syncMeterOverflow());
+    this._syncMeterOverflow();
   }
 }
 

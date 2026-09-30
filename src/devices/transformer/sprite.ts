@@ -78,18 +78,14 @@ export function spriteSinglePhaseTransformer() {
 
   // ---- printed tap voltages, sitting in the gap between the winding and
   //      the jack columns (was overlapping the outer jack row at x=755) ----
-  // Section voltages, each sitting between the two taps it spans.
-  //
-  // These carry the MODEL's values (Transformer.sections in
-  // src/engine/devices/transformer.ts), not the ones printed on the reference
-  // photo. The photo reads 53 / 147 / 200 down the 2U coil, which would make
-  // 2U1–2U2 a 400 V winding and the pair 630 V in series. The model treats it
-  // as a 200 V winding (53 / 94 / 53) and the 3U as 230 V (115 / 115), which
-  // is what the 400 V / 230 V nameplate actually supports. Panel and solver
-  // have to agree or a student measures one number and reads another.
+  // Per-segment voltages for the 2U coil: 53 / 147 / 200. Segments add in
+  // series, so 2U1-2U3=53, 2U3-2U4=147, 2U4-2U2=200, and 2U1-2U2=400 V.
+  // Must stay identical to Transformer.sections in
+  // src/devices/transformer/model.ts or a student reads one number and
+  // measures another.
   s += txt(700, 220, '53V',  { size: 22, weight: '700', anchor: 'middle' });
-  s += txt(700, 317, '94V',  { size: 22, weight: '700', anchor: 'middle' });
-  s += txt(700, 405, '53V',  { size: 22, weight: '700', anchor: 'middle' });
+  s += txt(700, 317, '147V', { size: 22, weight: '700', anchor: 'middle' });
+  s += txt(700, 405, '200V', { size: 22, weight: '700', anchor: 'middle' });
   s += txt(700, 590, '115V', { size: 22, weight: '700', anchor: 'middle' });
   s += txt(700, 665, '115V', { size: 22, weight: '700', anchor: 'middle' });
 

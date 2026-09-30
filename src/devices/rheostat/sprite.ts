@@ -8,6 +8,9 @@ export function spriteRheostat() {
   // Two 308T rheostat units (grey front + green rear) traced from
   // resistance.jpg — drawn in the reference's own pixel grid.
   const W = 320, H = 366;
+  // Keep the ORIGINAL viewBox. Changing it shifts every painted element's
+  // device-space position, which desyncs the layout.ts term coordinates from
+  // the jacks they are supposed to mark — the whole panel drifts.
   let s = '<svg width="' + W + '" height="' + H + '" viewBox="60 140 560 640" ' +
     'xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision">';
 
@@ -35,9 +38,14 @@ export function spriteRheostat() {
       o += '<line x1="' + (x + 66) + '" y1="' + yy + '" x2="' + (x + 100) + '" y2="' + yy + '" stroke="#f0f0ec" stroke-width="2"/>';
       o += '<line x1="' + (x + 140) + '" y1="' + yy + '" x2="' + (x + 174) + '" y2="' + yy + '" stroke="#f0f0ec" stroke-width="2"/>';
     }
-    // wiper slider + red handle
+    // wiper slider + red handle. Tagged data-wiper with the unit code
+    // (the trailing 'A'/'B' of the tag), so the lab can slide each unit's
+    // handle independently to its own model position.
+    const wiperCode = String(tag).slice(-1);
+    o += '<g data-wiper="' + wiperCode + '">';
     o += '<rect x="' + (x + 96) + '" y="150" width="48" height="30" rx="5" fill="#2b2e2d" stroke="#111" stroke-width="2"/>';
     o += '<rect x="' + (x + 104) + '" y="158" width="32" height="14" rx="3" fill="#c0392b" stroke="#111" stroke-width="1.2"/>';
+    o += '</g>';
     // ventilation slots on both shoulders
     o += vents(x + 14, 200, x + 54, 330, '#3c4040');
     o += vents(x + w - 54, 200, x + w - 14, 330, '#3c4040');
@@ -55,6 +63,14 @@ export function spriteRheostat() {
 
   // ---- grey (front) unit ----
   s += unit(70, '#b9bdba', '#6e7270', 'red', 'black', 'Unit A');
+  // ---- resistance monitor LCD on unit A ----
+  // Sits on the lower body of unit A (y=330..430), clear of the wiper track
+  // above and the caution label below. Read live from the model's `R` readout
+  // via the data-live hook in _updateSpriteReadouts().
+  s += '<rect x="92" y="336" width="160" height="66" rx="8" fill="#101410" stroke="#111" stroke-width="3"/>';
+  s += '<rect x="100" y="344" width="144" height="50" rx="4" fill="#0a1410" stroke="#2a3a2a" stroke-width="1.2"/>';
+  s += '<text x="172" y="382" text-anchor="middle" font-family="monospace" font-size="30" font-weight="700" fill="#39ff88" data-live="RA">0</text>';
+  s += '<text x="172" y="392" text-anchor="middle" font-family="monospace" font-size="11" fill="#39ff88" data-live-unit="RA">ohm</text>';
   // caution label on the grey unit
   s += '<rect x="92" y="600" width="150" height="86" rx="4" fill="#e8c014" stroke="#8a6a00" stroke-width="1.6"/>';
   s += '<polygon points="216,608 236,644 196,644" fill="none" stroke="#111" stroke-width="2"/>';
@@ -68,6 +84,12 @@ export function spriteRheostat() {
 
   // ---- green (rear) unit ----
   s += unit(370, '#4f7a4f', '#2c4a2c', 'red', 'red', 'Unit B');
+  // ---- resistance monitor LCD on unit B ----
+  // Mirrors unit A's monitor. Reads the green element's RB via data-live.
+  s += '<rect x="392" y="336" width="160" height="66" rx="8" fill="#101410" stroke="#111" stroke-width="3"/>';
+  s += '<rect x="400" y="344" width="144" height="50" rx="4" fill="#0a1410" stroke="#2a3a2a" stroke-width="1.2"/>';
+  s += '<text x="472" y="382" text-anchor="middle" font-family="monospace" font-size="30" font-weight="700" fill="#39ff88" data-live="RB">0</text>';
+  s += '<text x="472" y="392" text-anchor="middle" font-family="monospace" font-size="11" fill="#39ff88" data-live-unit="RB">ohm</text>';
   // TESTED sticker
   s += '<ellipse cx="490" cy="556" rx="46" ry="19" fill="#d8e8cf" stroke="#3a6a3a" stroke-width="1.8"/>';
   s += txt(490, 562, 'TESTED', { size: 15, weight: '700', anchor: 'middle' });

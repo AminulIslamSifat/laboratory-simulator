@@ -21,13 +21,7 @@ export function spriteAsyncMotor3P() {
   s += txt(436, 166, 'MECHANICAL PARTS IN MOTION', { size: 11, anchor: 'middle' });
   s += txt(436, 181, 'PIECES MECANIQUES EN MOUVEMENT', { size: 11, anchor: 'middle' });
 
-  // ---- orange warning panel on the left ----
-  s += '<rect x="88" y="470" width="132" height="340" rx="6" fill="#e8720c" stroke="#8a3f00" stroke-width="2.5"/>';
-  s += '<g transform="translate(156,640) rotate(-90)">' +
-    txt(0, 0, 'WARNING !  ATTENZIONE !', { size: 24, weight: '700', anchor: 'middle' }) +
-    txt(0, 27, 'MECHANICAL PARTS IN MOTION', { size: 14, anchor: 'middle' }) +
-    txt(0, 47, 'IU PRI MECCANICHE IN MOVIMENTO', { size: 13, anchor: 'middle' }) +
-    '</g>';
+  // (left-side orange warning panel removed per spec)
 
   // ---- white terminal plate ----
   s += '<rect x="245" y="285" width="455" height="670" rx="6" fill="#f4f5ef" stroke="#141414" stroke-width="4"/>';
@@ -70,22 +64,27 @@ export function spriteAsyncMotor3P() {
     '<path d="M 480 715 L 480 780 L 403 780"/>' +
     '</g>';
 
-  // ---- nine terminal jacks (all black on this machine) ----
-  const cols = [326, 403, 480], rows = [672, 745, 818];
-  for (let r = 0; r < 3; r++) {
-    for (let c = 0; c < 3; c++) s += jack(cols[c], rows[r], 'black', 34);
-  }
+  // ---- six terminal jacks (2 rows x 3 cols), each wired separately to M ----
+  //   top row:  V2  U2  W2
+  //   bot row:  W1  V1  U1
+  const cols = [326, 412, 498], rows = [672, 800];
+  const jk: Array<[string, number, number]> = [
+    ['V2', 0, 0], ['U2', 1, 0], ['W2', 2, 0],
+    ['W1', 0, 1], ['V1', 1, 1], ['U1', 2, 1],
+  ];
+  for (const [, c, r] of jk) s += jack(cols[c], rows[r], 'black', 34);
+  // each jack drops/rises its OWN dedicated wire up to the M circle, separately
+  s += '<g stroke="#111" stroke-width="2.2" fill="none">';
+  s += '<path d="M 326 672 L 326 640 L 388 640 L 388 568"/>';   // V2
+  s += '<path d="M 412 672 L 412 568"/>';                        // U2 straight up
+  s += '<path d="M 498 672 L 498 640 L 436 640 L 436 568"/>';   // W2
+  s += '<path d="M 326 800 L 326 826 L 372 826 L 372 700 L 398 700 L 398 568"/>'; // W1
+  s += '<path d="M 412 800 L 412 568"/>';                        // V1 straight up
+  s += '<path d="M 498 800 L 498 826 L 452 826 L 452 700 L 426 700 L 426 568"/>'; // U1
+  s += '</g>';
 
-  // ---- printed labels ----
-  s += label(300, 666, 'A2', { anchor: 'end', size: 30 });
-  s += label(300, 739, 'A3', { anchor: 'end', size: 30 });
-  s += label(300, 812, 'D1', { anchor: 'end', size: 30 });
-  s += label(333, 624, 'W2', { anchor: 'middle', size: 30 });
-  s += label(412, 634, 'U2', { anchor: 'middle', size: 30 });
-  s += label(492, 644, 'W1', { anchor: 'middle', size: 30 });
-  s += label(333, 874, 'B1', { anchor: 'middle', size: 30 });
-  s += label(412, 874, 'B2', { anchor: 'middle', size: 30 });
-  s += label(490, 874, 'C2', { anchor: 'middle', size: 30 });
+  // ---- printed labels (below each jack) ----
+  for (const [name, c, r] of jk) s += label(cols[c], rows[r] + 78, name, { anchor: 'middle', size: 30 });
 
   // ---- rotating-field logo (top-right) ----
   s += '<g transform="translate(648,342)" stroke="#111" stroke-width="2.4" fill="none">' +
@@ -116,32 +115,19 @@ export function spriteAsyncMotor3P() {
   s += txt(472, 916, 'MOTEUR ASYNCHRONE TRIPHASE', { size: 14, anchor: 'middle' });
   s += txt(472, 934, 'MOTORE ASINCRONO TRIFASICO', { size: 14, anchor: 'middle' });
 
-  // ---- output shaft + spinning rotor (right face) ----
-  //
-  // The flange sits INSIDE the viewBox. It used to be drawn at x=1000..1250
-  // in a viewBox only 896 wide, so the entire shaft fell off the right edge of
-  // the SVG and rendered as a detached blob floating outside the panel, while
-  // the SHAFT terminal dot sat on empty space with nothing under it.
-  //
-  // The comment here used to say "the machine is tall (896 ref px)" — which is
-  // true of its HEIGHT and false of its width. 896 is the WIDTH, so anything
-  // drawn past 896 simply does not exist. The 1:1 DC machine gets this right
-  // because its viewBox is 1195 wide; these coordinates were copied without
-  // rescaling.
-  //
-  // Placed at viewBox (825, 596): right of the body (which ends at x=750) and
-  // clear of the 896 edge once the 54px flange radius is added. The layout's
-  // SHAFT terminal is the same point in device space — 825 * 360/896 = 331.5,
-  // 596 * 479/1192 = 239.5 — so the jack dot lands on the flange centre and a
-  // Coupling can actually snap to it.
-  s += '<rect x="740" y="565" width="95" height="62" rx="7" fill="#9a9d9b" stroke="#111" stroke-width="3"/>';
-  s += '<circle cx="825" cy="596" r="54" fill="#c8ccc9" stroke="#111" stroke-width="3"/>';
-  s += '<circle cx="825" cy="596" r="36" fill="#a8adab" stroke="#333" stroke-width="2"/>';
-  s += '<g data-spin="1" transform-origin="825 596">';
-  s += '<rect x="818" y="546" width="14" height="100" rx="4" fill="#e8720c" stroke="#111" stroke-width="1.8"/>';
+  // ---- output shaft + spinning rotor (BOTTOM face) ----
+  // Moved from the right face to the bottom, centred under the body.
+  // Body spans x=150..750, so centre x=450. Body bottom is y=1020; the
+  // flange sits just below it. The SHAFT terminal in layout.ts is kept in
+  // sync with the flange centre: 450 * 360/896 = 180.8, 1085 * 479/1192 = 435.9.
+  s += '<rect x="402" y="1010" width="96" height="60" rx="7" fill="#9a9d9b" stroke="#111" stroke-width="3"/>';
+  s += '<circle cx="450" cy="1085" r="54" fill="#c8ccc9" stroke="#111" stroke-width="3"/>';
+  s += '<circle cx="450" cy="1085" r="36" fill="#a8adab" stroke="#333" stroke-width="2"/>';
+  s += '<g data-spin="1" transform-origin="450 1085">';
+  s += '<rect x="443" y="1035" width="14" height="100" rx="4" fill="#e8720c" stroke="#111" stroke-width="1.8"/>';
   s += '</g>';
-  s += '<circle cx="825" cy="596" r="11" fill="#2b2e2d" stroke="#111" stroke-width="2"/>';
-  s += txt(825, 683, 'SHAFT', { size: 16, weight: '700', anchor: 'middle' });
+  s += '<circle cx="450" cy="1085" r="11" fill="#2b2e2d" stroke="#111" stroke-width="2"/>';
+  s += txt(450, 1170, 'SHAFT', { size: 16, weight: '700', anchor: 'middle' });
 
   return s + '</svg>';
 }

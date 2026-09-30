@@ -28,9 +28,25 @@ export function spriteMeter(opts: { mode: string }) {
   // ---- blue LCD ----
   s += '<rect x="150" y="100" width="220" height="112" rx="4" fill="#0e2a3a" stroke="#111" stroke-width="2.4"/>';
   s += '<rect x="157" y="107" width="206" height="98" fill="#3f96d4" stroke="#1d5a8a" stroke-width="1"/>';
-  // main reading + unit, mode-correct (centred so it never clips)
-  s += txt(256, 168, isV ? '220.0' : '1.400', { size: 38, weight: '700', anchor: 'end', color: '#08161f' });
-  s += txt(268, 168, isV ? 'V' : 'A', { size: 26, weight: '700', anchor: 'start', color: '#08161f' });
+  // Main reading + unit.
+  //
+  // These used to be painted constants - '220.0' / '1.400' - so the meter's
+  // OWN LCD read a fixed number forever while only the sidebar updated. The
+  // value node is now bound with data-live and the render loop writes it each
+  // frame. The key is the model's readout name, which is just the mode: 'V'
+  // or 'A' (see Meter.readouts()).
+  //
+  // Written inline rather than with _lv()/_lu(): those helpers hardcode the
+  // rack's green-on-black dialect and a centred anchor, which is wrong on
+  // this panel's dark-on-blue LCD and would shift the digits off the bezel.
+  const liveKey = isV ? 'V' : 'A';
+  const idle = isV ? '0.0' : '0.000';
+  s += '<text x="256" y="168" data-live="' + liveKey + '" text-anchor="end" ' +
+    'font-family="Arial,Helvetica,sans-serif" font-size="38" font-weight="700" ' +
+    'fill="#08161f">' + idle + '</text>';
+  s += '<text x="268" y="168" data-live-unit="' + liveKey + '" text-anchor="start" ' +
+    'font-family="Arial,Helvetica,sans-serif" font-size="26" font-weight="700" ' +
+    'fill="#08161f">' + (isV ? 'V' : 'A') + '</text>';
   s += txt(260, 194, isV ? 'DC · RANGE 500V' : 'DC · RANGE 2A', { size: 9, anchor: 'middle', color: '#0a2a3a' });
   // small mode tag inside LCD
   s += txt(184, 128, isV ? 'V' : 'A', { size: 12, weight: '700', color: '#0a2a3a' });

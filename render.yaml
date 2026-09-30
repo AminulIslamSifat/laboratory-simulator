@@ -1,0 +1,26 @@
+# Render blueprint for the EEE-2152 bench simulator.
+#
+# This is a `web` service, NOT a static site. The bench-api Vite plugin mounts
+# /api/bench/* on the preview server, so Save writes real files on the host —
+# no browser API, no download fallback. A static site has no process running
+# and therefore nothing that can write, which is the whole distinction.
+services:
+  - type: web
+    name: eee-sim
+    runtime: node
+    # Persistent disks are a paid feature. On the free plan `benches/` lives on
+    # the container filesystem and is wiped on every deploy or restart.
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm run preview
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+    disk:
+      name: benches
+      # Must sit under the service working directory (/opt/render/project/src)
+      # because BENCH_DIR is resolved relative to process.cwd(). Anything
+      # written outside this path is lost on the next deploy.
+      mountPath: /opt/render/project/src/benches
+      sizeGB: 1

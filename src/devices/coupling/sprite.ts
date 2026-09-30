@@ -21,6 +21,13 @@ export function spriteCoupling() {
   s += '<circle cx="243" cy="120" r="9" fill="#2b2e2d" stroke="#111" stroke-width="2"/>';
   // keyway highlight
   s += '<rect x="120" y="112" width="60" height="16" rx="3" fill="#6a6e6c" stroke="#111" stroke-width="1.4"/>';
+  // ---- rotating index mark on the barrel ----
+  // A rigid coupling turns at the shared shaft speed. ONE off-centre mark is
+  // enough to read that; a symmetric ring of bolts would alias at 90/120/180
+  // degrees and look stationary at exactly the speeds it matters most.
+  s += '<g data-spin="1" transform-origin="150 120">';
+  s += '<circle cx="163" cy="98" r="6.5" fill="#e8720c" stroke="#111" stroke-width="1.6"/>';
+  s += '</g>';
   s += txt(200, 210, 'RIGID COUPLING', { size: 15, weight: '700', anchor: 'middle' });
   s += txt(40, 36, 'MA', { size: 12, weight: '700', anchor: 'middle' });
   s += txt(360, 36, 'MB', { size: 12, weight: '700', anchor: 'middle' });

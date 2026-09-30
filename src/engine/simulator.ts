@@ -401,6 +401,7 @@ export class Simulator {
         Tmax: number;
         slipped: boolean;
         T: number;
+        omega: number;
       };
 
       const aId = coupling._mechA;
@@ -423,6 +424,14 @@ export class Simulator {
       const Ja = safeInertia(A.J);
       const Jb = safeInertia(B.J);
 
+      // Shared speed for a rigid shaft. A side with a prime mover pins the
+      // speed; otherwise the two inertias decide it.
+      //
+      // The bug this replaces: when NEITHER side had a prime mover, `target`
+      // was the momentum average - which for two machines sitting at rest is
+      // zero. The pass then relaxed both omegas toward zero, forever, and a
+      // motor with 0.29 N m of developed torque never turned a wheel. The
+      // coupling was not a shaft, it was a brake.
       let target: number;
       if (A.primeRpm > 0 && B.primeRpm > 0) {
         target = (A.omega * Ja + B.omega * Jb) / (Ja + Jb);
@@ -431,7 +440,26 @@ export class Simulator {
       } else if (B.primeRpm > 0) {
         target = B.omega;
       } else {
-        target = (A.omega * Ja + B.omega * Jb) / (Ja + Jb);
+        // No prime mover. The pair must still ACCELERATE under whatever net
+        // torque each side develops. Integrate the combined inertia forward
+        // by the net torque, then lock both sides to the result.
+        //
+        // `driveTorque` is each machine's own developed torque, read from its
+        // public Te if it exposes one. A machine with no Te contributes none.
+        const drive = (x: Machine): number => {
+          const t = (x as unknown as { Te?: number }).Te;
+          return typeof t === 'number' && Number.isFinite(t) ? t : 0;
+        };
+        const load = (x: Machine): number => {
+          const t = (x as unknown as { Tprime?: number }).Tprime;
+          return typeof t === 'number' && Number.isFinite(t) ? t : 0;
+        };
+        const J = Ja + Jb;
+        const netT = drive(A) + drive(B) + load(A) + load(B);
+        const shared = (A.omega * Ja + B.omega * Jb) / J;
+        target = shared + (netT / J) * dt;
+        if (!Number.isFinite(target)) target = shared;
+        if (target < 0) target = 0;
       }
 
       // Coupling loss torque is proportional to the speed mismatch.
@@ -448,6 +476,14 @@ export class Simulator {
       B.omega += (target - B.omega) * k;
       if (!Number.isFinite(A.omega)) A.omega = 0;
       if (!Number.isFinite(B.omega)) B.omega = 0;
+      if (A.omega < 0) A.omega = 0;
+      if (B.omega < 0) B.omega = 0;
+
+      // The coupling body turns with the shaft it locks. Nothing electrical
+      // reads this, but the renderer spins the barrel from it - a rigid
+      // coupling visibly turning between two turning flanges is the entire
+      // reason it is drawn. Left at zero, the barrel sat dead between them.
+      coupling.omega = target;
     }
   }
 

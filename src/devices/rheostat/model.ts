@@ -18,10 +18,9 @@ export interface RheostatOptions {
   id?: string;
   label?: string;
   terminals?: Record<string, number>;
-  tA?: string;
-  tB?: string;
   Rmax?: number;
-  pos?: number;
+  posA?: number;
+  posB?: number;
 }
 
 export class Rheostat implements Device {
@@ -34,45 +33,82 @@ export class Rheostat implements Device {
   // terminal override replaces `terminals` with the sprite's term list, so
   // '1'/'2' never exist and stamp() would silently bail.
   terminals: Record<string, number>;
-  tA: string;
-  tB: string;
   Rmax: number;
-  pos: number;
-  I = 0;
 
-  readonly thermal = new Thermal({ C: 300, Rth: 3, Tmax: 200, Tburn: 350 });
+  // Wiper positions for the two independent elements, 0..1.
+  posA: number;
+  posB: number;
+
+  // Measured current through each element (for readouts / thermal).
+  IA = 0;
+  IB = 0;
+
+  readonly thermalA = new Thermal({ C: 300, Rth: 3, Tmax: 200, Tburn: 350 });
+  readonly thermalB = new Thermal({ C: 300, Rth: 3, Tmax: 200, Tburn: 350 });
 
   constructor(opts: RheostatOptions = {}) {
     this.id = opts.id ?? uid('rh');
     this.label = opts.label ?? 'Rheostat';
     this.terminals = opts.terminals ?? { A_TOP: 1, A_BOT: 1, B_TOP: 1, B_YEL: 1, B_RED: 1 };
-    this.tA = opts.tA ?? 'A_TOP';
-    this.tB = opts.tB ?? 'A_BOT';
     this.Rmax = opts.Rmax ?? 500;
-    this.pos = opts.pos ?? 0.5;
+    this.posA = opts.posA ?? 0.5;
+    this.posB = opts.posB ?? 0.5;
   }
 
-  get R(): number {
-    return this.Rmax * this.pos + 0.05;
+  /** Unit A element resistance (grey unit). */
+  get RA(): number {
+    return this.Rmax * this.posA + 0.05;
+  }
+
+  /** Unit B element resistance (green unit). */
+  get RB(): number {
+    return this.Rmax * this.posB + 0.05;
+  }
+
+  /**
+   * Front-panel dials. `posA` drives the grey unit's wiper, `posB` the green
+   * unit's. Each is 0..1 and maps linearly to R = 500 * pos for that element.
+   */
+  setControl(id: string, value: number | string | boolean): void {
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(n)) return;
+    const v = Math.max(0, Math.min(1, n));
+    if (id === 'posA') this.posA = v;
+    else if (id === 'posB') this.posB = v;
   }
 
   stamp(mna: Mna, netOf: NetOf): void {
-    stampConductance(mna, netOf(this.id, this.tA), netOf(this.id, this.tB), 1 / this.R);
+    // Two independent elements. A_BOT and B_RED are the base terminals;
+    // B_YEL carries no element (spare post on the green unit).
+    stampConductance(mna, netOf(this.id, 'A_TOP'), netOf(this.id, 'A_BOT'), 1 / this.RA);
+    stampConductance(mna, netOf(this.id, 'B_TOP'), netOf(this.id, 'B_RED'), 1 / this.RB);
   }
 
   update(dt: number, _sol: Solution): void {
-    const v = netDiff(_sol, this.id, this.tA, this.tB);
-    const a = _sol.netOf(this.id, this.tA);
-    const b = _sol.netOf(this.id, this.tB);
-    this.I = a !== undefined && b !== undefined ? Math.abs(v) / this.R : 0;
-    this.thermal.step(dt, this.I * this.I * this.R);
+    const vA = netDiff(_sol, this.id, 'A_TOP', 'A_BOT');
+    const aA = _sol.netOf(this.id, 'A_TOP');
+    const bA = _sol.netOf(this.id, 'A_BOT');
+    this.IA = aA !== undefined && bA !== undefined ? Math.abs(vA) / this.RA : 0;
+    this.thermalA.step(dt, this.IA * this.IA * this.RA);
+
+    const vB = netDiff(_sol, this.id, 'B_TOP', 'B_RED');
+    const aB = _sol.netOf(this.id, 'B_TOP');
+    const bB = _sol.netOf(this.id, 'B_RED');
+    this.IB = aB !== undefined && bB !== undefined ? Math.abs(vB) / this.RB : 0;
+    this.thermalB.step(dt, this.IB * this.IB * this.RB);
   }
 
   readouts(): Readout[] {
     return [
-      { name: 'R', value: this.R, unit: 'ohm' },
-      { name: 'I', value: this.I, unit: 'A' },
-      { name: 'T', value: this.thermal.T, unit: 'C', warn: this.thermal.T > 150 }
+      // RA / RB are what the two monitors show. R stays as the SERIES SUM of
+      // the two elements for any consumer that wants a single figure.
+      { name: 'RA', value: this.RA, unit: 'ohm' },
+      { name: 'RB', value: this.RB, unit: 'ohm' },
+      { name: 'R', value: this.RA + this.RB, unit: 'ohm' },
+      { name: 'IA', value: this.IA, unit: 'A' },
+      { name: 'IB', value: this.IB, unit: 'A' },
+      { name: 'TA', value: this.thermalA.T, unit: 'C', warn: this.thermalA.T > 150 },
+      { name: 'TB', value: this.thermalB.T, unit: 'C', warn: this.thermalB.T > 150 }
     ];
   }
 }

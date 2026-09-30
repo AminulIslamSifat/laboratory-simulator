@@ -65,12 +65,25 @@ export function spritePowerSupply() {
     return o;
   }
 
-  // large variac dial, outer radius 56
-  function variac(cx?: any, cy?: any) {
+  // large variac dial, outer radius 56.
+  //
+  // `data-angle` marks the rotatable pointer group. The render loop rewrites
+  // its `transform` from the bound control's value, so the knob visibly turns
+  // as the voltage dial is wound. Without the marker the dial is painted art
+  // that never moves, which is what it used to be.
+  function variac(cx?: any, cy?: any, angleKey?: any) {
     let o = '';
     o += '<circle cx="' + cx + '" cy="' + cy + '" r="56" fill="#d2d5d4" stroke="#6a6e6c" stroke-width="1.8"/>';
     o += '<circle cx="' + cx + '" cy="' + cy + '" r="50" fill="#e6e8e7" stroke="#b0b4b2" stroke-width="0.8"/>';
     o += '<circle cx="' + cx + '" cy="' + cy + '" r="43" fill="#c6cac9" stroke="#9aa09e" stroke-width="1"/>';
+    // rotatable pointer: a white bar from the centre out to the rim, with a
+    // grip hub. The group carries data-angle so lab.ts can rotate it.
+    o += '<g' + (angleKey ? ' data-angle="' + angleKey + '"' : '') +
+      ' transform="rotate(0 ' + cx + ' ' + cy + ')">';
+    o += '<circle cx="' + cx + '" cy="' + cy + '" r="14" fill="#eef0ef" stroke="#9aa09e" stroke-width="1.2"/>';
+    o += '<rect x="' + (cx - 4) + '" y="' + (cy - 44) + '" width="8" height="44" rx="3" fill="#f4f6f5" stroke="#8d918f" stroke-width="1.1"/>';
+    o += '<circle cx="' + cx + '" cy="' + cy + '" r="5" fill="#c2c6c5" stroke="#8d918f" stroke-width="1"/>';
+    o += '</g>';
     // dark arc hugging the upper-left of the dial, as printed on the panel
     o += '<path d="M ' + (cx - 41.6) + ' ' + (cy + 24) + ' A 48 48 0 0 1 ' + (cx - 16.4) + ' ' + (cy - 45.1) + '" fill="none" stroke="#111" stroke-width="3.5"/>';
     // rotation arrow above the dial
@@ -79,8 +92,14 @@ export function spritePowerSupply() {
     return o;
   }
 
-  // AEG miniature circuit-breaker block
-  function aeg(x?: any, y?: any, w?: any, h?: any, poles?: any) {
+  // AEG miniature circuit-breaker block.
+  //
+  // `keys` maps each pole to a control id. The pole's handle is wrapped in a
+  // <g data-aeg="<id>"> so the render loop can THROW it: down = OFF, up = ON.
+  // A breaker that only glows but never moves does not read as a switch, and
+  // on this machine the AEG block IS the line's on/off - so the lever has to
+  // travel, exactly like the real one.
+  function aeg(x?: any, y?: any, w?: any, h?: any, poles?: any, keys?: any) {
     let o = '';
     o += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" fill="#f2f2ee" stroke="#1a1a1a" stroke-width="1.4"/>';
     o += txt(x + 6, y + 16, 'AEG', { size: 11, weight: '700', color: '#c0392b' });
@@ -88,8 +107,14 @@ export function spritePowerSupply() {
     const bw = (w - 8) / poles;
     for (let i = 0; i < poles; i++) {
       const bx = x + 4 + i * bw;
+      // The handle travels 45% of its own height. At rest (OFF) it sits low
+      // in the slot; energised (ON) it rises toward the top.
+      const travel = h * 0.28;
+      const key = keys && keys[i] ? ' data-aeg="' + keys[i] + '"' : '';
       o += '<rect x="' + bx + '" y="' + (y + 24) + '" width="' + (bw - 2) + '" height="' + (h * 0.42) + '" fill="#f6f6f2" stroke="#666" stroke-width="0.7"/>';
+      o += '<g' + key + ' data-aeg-base="' + (y + 26) + '" data-aeg-travel="' + travel + '">';
       o += '<rect x="' + (bx + 1) + '" y="' + (y + 26) + '" width="' + (bw - 4) + '" height="' + (h * 0.34) + '" fill="#22262a"/>';
+      o += '</g>';
     }
     o += '<path d="M ' + (x + 2) + ' ' + (y + h - 14) + ' q ' + (w / 2) + ' 12 ' + (w - 4) + ' 0" fill="none" stroke="#111" stroke-width="8"/>';
     o += '<path d="M ' + (x + 2) + ' ' + (y + h - 14) + ' q ' + (w / 2) + ' 12 ' + (w - 4) + ' 0" fill="none" stroke="#33383c" stroke-width="3.5"/>';
@@ -185,13 +210,15 @@ export function spritePowerSupply() {
   s += txt(443, 118, 'ON', { size: 8, weight: '700' });
   s += bigKnob(481, 111, 23, 38);
 
-  // variac
-  s += variac(652, 165);
+  // variac — bound to the variable-AC voltage so the white knob turns as it
+  // is wound. (The variable-DC rail shares the same physical knob on this
+  // panel; vacV is the axis the panel legend prints for it.)
+  s += variac(652, 165, 'vacV');
 
   // main breaker group: AEG + E.TN
   s += txt(341, 140, 'ON', { size: 8, weight: '700', anchor: 'middle' });
   s += txt(341, 150, 'MARCHE', { size: 8, weight: '700', anchor: 'middle' });
-  s += aeg(298, 190, 179, 67, 4);
+  s += aeg(298, 190, 179, 67, 4, ['vdcOn', 'vdcOn', 'vacOn', 'vacOn']);
   s += etn(477, 190, 80, 67, 2, 'E.TN');
   s += txt(517, 182, 'M', { size: 8, weight: '700', anchor: 'middle' });
   s += txt(341, 272, 'OFF', { size: 8, weight: '700', anchor: 'middle' });
@@ -238,7 +265,7 @@ export function spritePowerSupply() {
   ], 6.4);
   s += txt(341, 424, 'ON', { size: 8, weight: '700', anchor: 'middle' });
   s += txt(341, 434, 'MARCHE', { size: 8, weight: '700', anchor: 'middle' });
-  s += aeg(298, 442, 106, 67, 4);
+  s += aeg(298, 442, 106, 67, 4, ['f3pOn', 'f3pOn', 'f3pOn', 'f3pOn']);
   s += roundCap(468, 447, 21);
   s += txt(341, 520, 'OFF', { size: 8, weight: '700', anchor: 'middle' });
   s += txt(341, 530, 'ARRET', { size: 8, weight: '700', anchor: 'middle' });
@@ -307,7 +334,7 @@ export function spritePowerSupply() {
   // main incoming group: AEG + fuse + two E.TN modules
   s += txt(365, 652, 'ON', { size: 8, weight: '700', anchor: 'middle' });
   s += txt(365, 662, 'MARCHE', { size: 8, weight: '700', anchor: 'middle' });
-  s += aeg(299, 664, 100, 66, 4);
+  s += aeg(299, 664, 100, 66, 4, ['master', 'master', 'master', 'master']);
   s += '<rect x="399" y="664" width="26" height="66" fill="#eeeee9" stroke="#1a1a1a" stroke-width="1.4"/>';
   s += '<circle cx="412" cy="678" r="9" fill="#111"/>';
   s += txt(412, 681, 'U>A', { size: 5, weight: '700', color: '#c0392b', anchor: 'middle' });
@@ -322,9 +349,14 @@ export function spritePowerSupply() {
   s += head(598, 650, ['MAIN SWITCH', 'SIT REG', 'MT GERAL'], 6.4);
   s += rotary(576, 700, 26, 30, 18);
 
-  // ---- LINE blanking cap ----
+  // ---- LINE indicator lamp ----
+  // Lit when the main line is energised (enabled && master && !estop). The
+  // fill is driven from the model via the data-led marker; it paints dark red
+  // here so a de-energised bench reads as "off", not as a dead grey cap.
   s += head(665, 622, ['LINE', 'LIGNE', 'LINE', 'LINE'], 6.2);
-  s += roundCap(665, 694, 21);
+  s += '<circle cx="665" cy="694" r="21" fill="#8d918f" stroke="#5a5d5c" stroke-width="2"/>';
+  s += '<circle cx="665" cy="694" r="17" data-led="line" fill="#3a1a1a" stroke="#9aa09e" stroke-width="1.4"/>';
+  s += '<circle cx="659" cy="688" r="5" fill="#ffffff" opacity="0.25"/>';
 
   // ---- EMERGENCY mushroom ----
   s += head(757, 618, ['EMERGENCY', 'EFOUENE', 'EMERGENCA', 'EMERGENCY', 'EMERGENCY'], 5.6);

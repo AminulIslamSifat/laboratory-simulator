@@ -1,6 +1,7 @@
 /// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
+import { benchApi } from './bench-api';
 
 /**
  * Build config.
@@ -32,9 +33,21 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
  * runtime. When something does go wrong on a lab machine, a stack trace that
  * points at `simulator.ts` instead of `index.js:1:48211` is worth the file.
  */
+/**
+ * Port and bind address for BOTH the dev server and `vite preview`.
+ *
+ * A container host (Render, Fly, Railway…) assigns the port through $PORT and
+ * can only reach a server bound to 0.0.0.0 — the default localhost bind is
+ * invisible from outside the container, so the health check fails and the
+ * deploy never goes live. Locally neither var is set, so the dev server keeps
+ * 5173 on localhost and stays off the LAN.
+ */
+const PORT = Number(process.env.PORT) || 5173;
+const HOST = process.env.PORT ? '0.0.0.0' : 'localhost';
+
 export default defineConfig({
   base: './',
-  plugins: [viteSingleFile()],
+  plugins: [viteSingleFile(), benchApi()],
   build: {
     target: 'es2022',
     outDir: 'dist',
@@ -55,8 +68,16 @@ export default defineConfig({
     }
   },
   server: {
-    port: 5173,
+    host: HOST,
+    port: PORT,
     open: false
+  },
+  // `vite preview` serves the built dist/ AND mounts the bench-api plugin, so
+  // Save writes real files on the host with no browser API and no download
+  // fallback. Same bind rules as the dev server above.
+  preview: {
+    host: HOST,
+    port: PORT
   },
   test: {
     environment: 'node',

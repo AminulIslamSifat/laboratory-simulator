@@ -4,12 +4,17 @@
  * Terminals: P230 PE (primary) · B1 B2 (printed link) · RA (51 ohm)
  *            2U1 2U3 2U4 2U2 3U1 3U3 3U2 (tapped secondary)
  *
- * Secondary sections, referenced to the 230 V primary:
- *   3U2-3U3 = 115 V · 3U3-3U1 = 115 V  ->  3U2-3U1 = 230 V
- *   2U1-2U3 =  53 V · 2U3-2U4 =  94 V · 2U4-2U2 = 53 V
- *                                       ->  2U1-2U2 = 200 V
- * Chain the two groups and you land on the printed 400 V range
- * (230 + 200 = 430 V nominal, about 400 V under load).
+ * Secondary sections, referenced to the 230 V primary. Each entry is the
+ * PER-SEGMENT voltage between adjacent taps. Segments add in series along
+ * the winding, so the voltage between any two taps is the sum of the
+ * segments between them.
+ *
+ *   3U1-3U3 = 115 V · 3U3-3U2 = 115 V   ->  3U1-3U2 = 230 V
+ *   2U1-2U3 =  53 V · 2U3-2U4 = 147 V · 2U4-2U2 = 200 V
+ *                                        ->  2U1-2U2 = 400 V
+ *
+ * The 400 V range is the 2U chain summing to 400, NOT 2U + 3U. 3U is an
+ * independent 230 V secondary, matching the panel's U2 = 400V-230V label.
  */
 
 import { Thermal } from '../../engine/thermal.js';
@@ -110,8 +115,8 @@ export class Transformer implements Device {
       ['3U2', '3U3', 115, 1.1],
       ['3U3', '3U1', 115, 1.1],
       ['2U1', '2U3', 53, 0.4],
-      ['2U3', '2U4', 94, 0.7],
-      ['2U4', '2U2', 53, 0.4]
+      ['2U3', '2U4', 147, 0.7],
+      ['2U4', '2U2', 200, 0.4]
     ];
     this.Irated = this.Srated / this.Vrated;
   }
@@ -160,24 +165,32 @@ export class Transformer implements Device {
     // (E - v) measures load current rather than this frame's ramp.
     const vpForEmf = this.vpStamped;
 
-    // A section only delivers power if at least one of its two terminals sits
-    // on a net that LEAVES this device. The five sections are chained through
-    // shared intermediate terminals (3U3, 2U3, 2U4), so with the secondary
-    // open the string is a floating sub-network: the MNA matrix is singular
-    // there, the solve leaves those nodes at 0 V, and every section then
-    // reports a large (E - 0)/R current into a node that does not exist. That
-    // phantom current used to feed Gref, which dragged a fake load through the
-    // primary and tripped the supply breaker - an open-circuited transformer
-    // appeared to draw more current than a shorted one.
-    const externalNets = new Set<number>();
-    for (const n of sol.nets) {
-      for (const t of n.terminals) {
-        if (t.split(':')[0] !== this.id) {
-          externalNets.add(n.id);
-          break;
-        }
-      }
-    }
+    // A section only delivers power if its two terminals sit on nets that are
+    // actually CONNECTED to something - not left floating. The five sections
+    // are chained through shared intermediate terminals (3U3, 2U3, 2U4), so
+    // with the secondary fully open the string is a floating sub-network: the
+    // MNA matrix is singular there, the solve leaves those nodes at 0 V, and
+    // every section then reports a large (E - 0)/R current into a node that
+    // does not exist. That phantom current used to feed Gref, which dragged a
+    // fake load through the primary and tripped the supply breaker - an
+    // open-circuited transformer appeared to draw more current than a shorted
+    // one.
+    //
+    // The OLD guard tested "does this net leave the transformer", which was
+    // wrong for a SHORTED secondary: shorting 2U1-2U2 makes a closed loop
+    // ENTIRELY INSIDE the transformer, so every node in it is internal and the
+    // guard skipped the very sections that carry the short-circuit current -
+    // the SC test then drew only magnetising current (0.39 A) no matter how
+    // hard the primary was driven. The correct test is net SIZE: a floating
+    // open terminal sits alone on its net (size 1), while a shorted winding
+    // bonds its two ends onto one net that has at least two terminals.
+    const netSize = new Map<number, number>();
+    for (const n of sol.nets) netSize.set(n.id, n.terminals.length);
+    // Net index of the transformer's own internal point - the primary return.
+    // A section is live if either end is bonded to another terminal (size > 1)
+    // OR is the primary-referenced return the rest of the bench also sits on.
+    const live = (net: number | undefined): boolean =>
+      net !== undefined && (netSize.get(net) ?? 0) > 1;
 
     let sumI = 0;
     let sumP = 0;
@@ -185,7 +198,7 @@ export class Transformer implements Device {
       const a = sol.netOf(this.id, sec[0]);
       const b = sol.netOf(this.id, sec[1]);
       if (a === undefined || b === undefined) continue;
-      if (!externalNets.has(a) && !externalNets.has(b)) continue;
+      if (!live(a) && !live(b)) continue;
 
       const v = (sol.V[a] ?? 0) - (sol.V[b] ?? 0);
       const E = this.sectionEmf(sec, vpForEmf);
