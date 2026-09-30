@@ -227,7 +227,7 @@ function showAbout() {
     '<li><strong>Load Bench</strong> — restores from a saved JSON file</li>' +
     '</ul>' +
     '<h2>Credits</h2>' +
-    '<p>Aminul Islam Sifat · Roll 2403123 · Section C<br/>Submitted to: Tasnim Sarker Joyeeta, Asst. Prof., Dept. of EEE.</p>' +
+    '<p>Shadow · Roll 2403000 · Section C<br/>Submitted to: Course Instructor, Dept. of EEE.</p>' +
     '</div>';
   drawer.classList.remove('hidden');
 }

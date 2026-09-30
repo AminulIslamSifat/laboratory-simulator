@@ -8,12 +8,12 @@ Experiment Title : Experimental Analysis for Finding the
 Synchronous Reactance of a
 Three-Phase Synchronous Generator
 Submitted by:
-Md Aminul Islam Sifat
-Roll: 2403123
+Shadow
+Roll: 2403000
 Section: C
 Session: 2024-25
 Submitted to:
-Tasnim Sarker Joyeeta
+Course Instructor
 Assistant Professor
 Dept. of Electrical & Electronic
 Engineering

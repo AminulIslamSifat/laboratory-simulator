@@ -77,8 +77,8 @@ export interface BenchStore {
 /**
  * Normalise a roll number.
  *
- * Rolls are typed by hand on a lab PC, so `2403123 `, `2403123` and
- * `2403123\n` must all be the same owner. Uppercased and stripped of
+ * Rolls are typed by hand on a lab PC, so `2403000 `, `2403000` and
+ * `2403000\n` must all be the same owner. Uppercased and stripped of
  * everything that is not a letter or digit, which also makes the value safe
  * to use as a directory name in the filesystem backend without a second
  * sanitiser.

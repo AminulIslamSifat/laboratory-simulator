@@ -27,7 +27,7 @@ const KEY = 'eee2152.roll.v1';
  * Normalise a roll the same way the server does.
  *
  * Uppercased, letters and digits only. Both ends must agree exactly or a
- * bench saved as `2403123 ` would be invisible to a lookup for `2403123`.
+ * bench saved as `2403000 ` would be invisible to a lookup for `2403000`.
  */
 export function normRoll(roll: string): string {
   return String(roll || '')
@@ -89,7 +89,7 @@ export function askRoll(reason?: string): Promise<string | null> {
         '<h3 class="roll-title">' + (reason ? 'Change roll number' : 'Your roll number') + '</h3>' +
         '<p class="roll-sub">Experiments are saved under your roll, so only you can overwrite them.</p>' +
         '<input class="roll-input" type="text" inputmode="numeric" autocomplete="off" ' +
-          'spellcheck="false" placeholder="e.g. 2403123" value="' + esc(existing) + '" />' +
+          'spellcheck="false" placeholder="e.g. 2403000" value="' + esc(existing) + '" />' +
         '<p class="roll-err" hidden>Enter a roll number.</p>' +
         '<div class="roll-actions">' +
           '<button class="roll-btn ghost" data-r="cancel">Cancel</button>' +

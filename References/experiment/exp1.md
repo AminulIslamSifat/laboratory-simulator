@@ -7,13 +7,13 @@ Experiment No. : 01
 Experiment Title : Experiment Name: Study of Nameplate Ratings
 and Rated Speed (RPM) of Electrical Machines
 Submitted by:
-Aminul Islam Sifat
-Roll: 2403123
+Shadow
+Roll: 2403000
 Section: C
 Date of Experiment : 14 June 2026
 Date of Submission : 5 July 2026
 Submitted to:
-Tasnim Sarker Joyeeta
+Course Instructor
 Assistant Professor
 Dept. of Electrical & Elec-
 tronic Engineering, RUETExperiment No. 1

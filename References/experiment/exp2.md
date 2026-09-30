@@ -6,14 +6,14 @@ Experiment No.
 : 03
 Experiment Title : Polarity Test of a Single-Phase Transformer
 Submitted by:
-Md Aminul Islam Sifat
-Roll: 2403123
+Shadow
+Roll: 2403000
 Section: C
 Session: 2024-25
 Date of Experiment : 5 July 2026
 Date of Submission : 19 July 2026
 Submitted to:
-Tasnim Sarker Joyeeta
+Course Instructor
 Assistant Professor
 Dept. of Electrical & Electronic
 Engineering

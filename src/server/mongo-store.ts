@@ -13,7 +13,7 @@
  * ─── Collection shape ───
  *
  *   {
- *     roll:      '2403123',            // owner, normalised (see normRoll)
+ *     roll:      '2403000',            // owner, normalised (see normRoll)
  *     name:      'Exp 3',              // bench label
  *     bench:     { devices, wires },   // the whole serialised bench
  *     devices:   5, wires: 7,          // counts, so the hub need not read bench

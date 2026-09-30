@@ -253,8 +253,8 @@ function showAbout(): void {
     '<p>Contact resistance is modelled as an occasional bad joint. Thermal damage is '
     + 'permanent once it accumulates.</p>' +
     '<h2>Credits</h2>' +
-    '<p>Aminul Islam Sifat \u00b7 Roll 2403123 \u00b7 Section C<br/>' +
-    'Submitted to: Tasnim Sarker Joyeeta, Asst. Prof., Dept. of EEE.</p>' +
+    '<p>Shadow \u00b7 Roll 2403000 \u00b7 Section C<br/>' +
+    'Submitted to: Course Instructor, Dept. of EEE.</p>' +
     '</div>');
 }
 

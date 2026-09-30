@@ -7,12 +7,12 @@ Experiment No.
 Experiment Title : Observation of external Characteristics curve
 of a DC shunt Generator
 Submitted by:
-Md Aminul Islam Sifat
-Roll: 2403123
+Shadow
+Roll: 2403000
 Section: C
 Session: 2024-25
 Submitted to:
-Tasnim Sarker Joyeeta
+Course Instructor
 Assistant Professor
 Dept. of Electrical & Electronic
 Engineering

@@ -98,4 +98,4 @@ Integration tests build real benches, wire them, run the solver, and assert on t
 
 ## Author
 
-Aminul Islam Sifat · Roll 2403123 · Sec C · Dept. of CSE, RUET
+Shadow · Roll 2403000 · Sec C · Dept. of CSE, RUET

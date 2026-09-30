@@ -7,11 +7,11 @@ Experiment No. : 03
 Experiment Title : Determination of Transformer Parameters by
 Open Circuit and Short Circuit Tests
 Submitted by:
-Aminul Islam Sifat
-Roll: 2403123
+Shadow
+Roll: 2403000
 Section: C
 Submitted to:
-Tasnim Sarker Joyeeta
+Course Instructor
 Assistant Professor
 Dept. of Electrical & Elec-
 tronic Engineering, RUET
