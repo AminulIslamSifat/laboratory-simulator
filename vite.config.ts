@@ -45,6 +45,24 @@ import { benchApi } from './bench-api';
 const PORT = Number(process.env.PORT) || 5173;
 const HOST = process.env.PORT ? '0.0.0.0' : 'localhost';
 
+/**
+ * Hostnames Vite will answer for.
+ *
+ * Vite rejects any request whose `Host` header is not on this list. That is a
+ * DNS-rebinding guard, and it defaults to localhost only — which is why a
+ * deployed instance answers with "Blocked request. This host is not allowed."
+ * even though the container is healthy and the port is correct.
+ *
+ * A platform assigns the hostname, and preview deploys get a random subdomain
+ * (`<service>-pr-123.onrender.com`), so the list has to name the PLATFORM's
+ * domain rather than one exact host. A leading dot matches subdomains too.
+ * Override with ALLOWED_HOSTS="a.com,b.com" for a different host.
+ */
+const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || '.onrender.com,localhost')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 export default defineConfig({
   base: './',
   plugins: [viteSingleFile(), benchApi()],
@@ -70,14 +88,16 @@ export default defineConfig({
   server: {
     host: HOST,
     port: PORT,
-    open: false
+    open: false,
+    allowedHosts: ALLOWED_HOSTS
   },
   // `vite preview` serves the built dist/ AND mounts the bench-api plugin, so
   // Save writes real files on the host with no browser API and no download
   // fallback. Same bind rules as the dev server above.
   preview: {
     host: HOST,
-    port: PORT
+    port: PORT,
+    allowedHosts: ALLOWED_HOSTS
   },
   test: {
     environment: 'node',
