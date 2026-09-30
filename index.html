@@ -2,7 +2,21 @@
 <html lang='en'>
 <head>
 <meta charset='UTF-8' />
-<meta name='viewport' content='width=device-width, initial-scale=1.0' />
+<!--
+  viewport-fit=cover lets the app paint under the notch and the home
+  indicator; the CSS then insets its own chrome with env(safe-area-inset-*).
+
+  Deliberately NOT user-scalable=no. The bench owns its gestures via
+  `touch-action: none`, so pinch on the canvas already zooms the bench and
+  never reaches the browser - blocking page zoom on top of that would only
+  take away the one way to magnify the reference drawer's 10px text.
+-->
+<meta name='viewport' content='width=device-width, initial-scale=1.0, viewport-fit=cover' />
+<meta name='theme-color' content='#06080c' />
+<meta name='color-scheme' content='dark' />
+<meta name='mobile-web-app-capable' content='yes' />
+<meta name='apple-mobile-web-app-capable' content='yes' />
+<meta name='apple-mobile-web-app-status-bar-style' content='black-translucent' />
 <title>EEE-2152 · Electrical Machines Laboratory</title>
 <link rel='stylesheet' href='assets/style.css' />
 </head>
@@ -109,7 +123,10 @@
           </div>
           <div class='bench-hint' id='bench-hint'>
             <i data-lucide='mouse-pointer-2' class='lucide-icon bench-hint-ico'></i>
-            <span>drag empty space to pan · scroll to zoom · double-click empty space to fit</span>
+            <!-- Text is swapped for touch in src/ui/app.ts: a phone has no
+                 scroll wheel and no double-click, so the pointer wording
+                 would be instructing the user to do something impossible. -->
+            <span id='bench-hint-txt'>drag empty space to pan · scroll to zoom · double-click empty space to fit</span>
           </div>
         </div>
         <div class='bench-front'></div>

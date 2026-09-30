@@ -37,6 +37,23 @@ const drawerTtl = el('drawer-title');
 const drawerBody = el('drawer-body');
 const toast = el('toast');
 
+/*
+ * Swap the bench hint for touch.
+ *
+ * The bench-hint text tells the user how to drive the canvas. On a phone the
+ * pointer instructions are not just unhelpful, they describe gestures the
+ * device cannot perform - there is no scroll wheel and no double-click. The
+ * touch handlers in lab.ts already support pan, pinch and double-tap; this is
+ * the part that says so.
+ *
+ * Done once at module load, not per-render: the pointer type of the device
+ * cannot change while the app is running in any way that matters.
+ */
+if (window.matchMedia('(hover: none) and (pointer: coarse)').matches) {
+  const hint = document.getElementById('bench-hint-txt');
+  if (hint) hint.textContent = 'drag to pan \u00b7 pinch to zoom \u00b7 double-tap to fit';
+}
+
 
 /* ────────────────────────────────────────────────────────────────
    Boot sequence

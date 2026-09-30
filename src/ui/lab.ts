@@ -393,24 +393,108 @@ export class Lab {
 
   private _bindView(): void {
     const surf = this.surface;
-    let dragging = false;
-    let sx = 0, sy = 0, ox = 0, oy = 0, moved = false;
 
-    surf.addEventListener('mousedown', (e: MouseEvent) => {
+    /* Pointer Events, not Mouse Events.
+     *
+     * The old handlers were mouse-only, which on a phone meant the bench
+     * could not be panned at all: the browser claimed every drag as a page
+     * scroll, `mousemove` never fired, and the surface sat there. Pointer
+     * Events unify mouse, touch and pen into one stream, and pointer capture
+     * keeps a drag bound to the surface even when the finger leaves it.
+     *
+     * Multi-touch is tracked by pointer id: one pointer pans, two pinch-zoom
+     * about their midpoint. That is the whole gesture vocabulary anyone
+     * expects on a canvas, and it costs one Map. */
+
+    // pointerId -> latest surface-local position
+    const active = new Map<number, { x: number; y: number }>();
+    let panning = false;
+    let sx = 0, sy = 0, ox = 0, oy = 0, moved = false;
+    // Pinch baseline: separation when the second finger landed, and the zoom
+    // it started from. Storing both makes the scale absolute rather than
+    // accumulating rounding error frame by frame.
+    let pinchDist = 0;
+    let pinchK = 1;
+
+    const local = (e: PointerEvent): { x: number; y: number } => {
+      const r = surf.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+
+    const pts = (): Array<{ x: number; y: number }> => [...active.values()];
+
+    const pairDist = (): number => {
+      const p = pts();
+      if (p.length < 2) return 0;
+      return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+    };
+
+    const pairMid = (): { x: number; y: number } => {
+      const p = pts();
+      return { x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2 };
+    };
+
+    surf.addEventListener('pointerdown', (e: PointerEvent) => {
       if ((e.target as HTMLElement).closest('.device')) return;  // device drag handles itself
       if (e.button === 2) return;                                // context menu
-      if (e.button !== 0) return;
-      this.deselectAll();
-      dragging = true;
-      moved = false;
-      sx = e.clientX; sy = e.clientY;
-      ox = this.view.x; oy = this.view.y;
-      surf.classList.add('panning');
-      e.preventDefault();
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+      active.set(e.pointerId, local(e));
+
+      if (active.size === 1) {
+        this.deselectAll();
+        panning = true;
+        moved = false;
+        sx = e.clientX; sy = e.clientY;
+        ox = this.view.x; oy = this.view.y;
+        surf.classList.add('panning');
+      } else if (active.size === 2) {
+        // A second finger means pinch, not pan. Dropping the pan flag here is
+        // what stops the view jumping when a finger is added mid-drag.
+        panning = false;
+        pinchDist = pairDist();
+        pinchK = this.view.k;
+        moved = true;
+      }
+
+      try { surf.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+
+      /* Only the MOUSE path needs preventDefault.
+       *
+       * On the mouse it suppresses the native drag-select that would otherwise
+       * start when you pan across the bench. On touch it is both unnecessary
+       * and dangerous: `touch-action: none` already stops the browser from
+       * scrolling, and cancelling a pointerdown tells the engine not to emit
+       * the compatibility mouse events - including the `click` that the
+       * wiring layer relies on to place a terminal pick. Wiring would go dead
+       * on exactly the devices this change is for. */
+      if (e.pointerType === 'mouse') e.preventDefault();
     });
 
-    window.addEventListener('mousemove', (e: MouseEvent) => {
-      if (!dragging) return;
+    surf.addEventListener('pointermove', (e: PointerEvent) => {
+      if (!active.has(e.pointerId)) return;
+      active.set(e.pointerId, local(e));
+
+      if (active.size >= 2) {
+        /* Pinch: identical maths to the wheel, with the ratio of finger
+         * separations standing in for exp(-deltaY). The world point under
+         * the midpoint stays fixed, which is what makes it read as the bench
+         * being held rather than sliding around under the fingers. */
+        const d = pairDist();
+        if (pinchDist > 0 && d > 0) {
+          const mid = pairMid();
+          const old = this.view.k;
+          const k = Math.min(3.5, Math.max(0.25, pinchK * (d / pinchDist)));
+          this.view.x = mid.x - (mid.x - this.view.x) * (k / old);
+          this.view.y = mid.y - (mid.y - this.view.y) * (k / old);
+          this.view.k = k;
+          this._applyView();
+          surf.classList.add('panned');
+        }
+        return;
+      }
+
+      if (!panning) return;
       const dx = e.clientX - sx, dy = e.clientY - sy;
       if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
       this.view.x = ox + dx;
@@ -418,14 +502,54 @@ export class Lab {
       this._applyView();
     });
 
-    window.addEventListener('mouseup', () => {
-      if (!dragging) return;
-      dragging = false;
-      surf.classList.remove('panning');
-      // Swallow the click that follows a pan so it does not clear a pending pick.
-      this.wiring._suppressClick = moved;
-      setTimeout(() => { this.wiring._suppressClick = false; }, 0);
-      if (moved) surf.classList.add('panned');
+    const endPointer = (e: PointerEvent): void => {
+      if (!active.has(e.pointerId)) return;
+      active.delete(e.pointerId);
+
+      if (active.size === 0) {
+        if (panning) {
+          surf.classList.remove('panning');
+          // Swallow the click that follows a pan so it does not clear a
+          // pending terminal pick.
+          this.wiring._suppressClick = moved;
+          setTimeout(() => { this.wiring._suppressClick = false; }, 0);
+          if (moved) surf.classList.add('panned');
+        }
+        panning = false;
+        pinchDist = 0;
+      } else if (active.size === 1) {
+        // One finger of a pinch lifted: hand the gesture back to a pan,
+        // re-anchored on the finger still down, so the bench does not snap.
+        const p = pts()[0];
+        const r = surf.getBoundingClientRect();
+        panning = true;
+        sx = p.x + r.left; sy = p.y + r.top;
+        ox = this.view.x; oy = this.view.y;
+        pinchDist = 0;
+      }
+    };
+
+    surf.addEventListener('pointerup', endPointer);
+    surf.addEventListener('pointercancel', endPointer);
+
+    /* Double-tap to fit, for touch.
+     *
+     * dblclick does fire on mobile, but only after a ~300ms delay and only if
+     * the two taps land on the same pixel - too fussy for a deliberate
+     * gesture. Track taps by hand: two pointerups inside 300ms and 24px. */
+    let lastTap = 0, lastTapX = 0, lastTapY = 0;
+    surf.addEventListener('pointerup', (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') return;   // desktop keeps dblclick
+      if (moved || active.size > 0) return;    // a pan, or a finger still down
+      const t = Date.now();
+      if (t - lastTap < 300 &&
+          Math.abs(e.clientX - lastTapX) < 24 &&
+          Math.abs(e.clientY - lastTapY) < 24) {
+        if (!(e.target as HTMLElement).closest('.device')) this.fitView();
+        lastTap = 0;
+        return;
+      }
+      lastTap = t; lastTapX = e.clientX; lastTapY = e.clientY;
     });
 
     // Wheel zoom about the cursor.
@@ -850,9 +974,18 @@ export class Lab {
     // Dials: press and drag vertically to wind the variac. A vertical drag is
     // used rather than a rotational one because the panel is viewed top-down
     // and a knob has no unambiguous angle under a pan/zoom transform.
-    el.addEventListener('mousedown', (e: MouseEvent) => {
+    /* Dials, on pointer events.
+     *
+     * The gesture is a vertical drag, so on touch the delta is divided by the
+     * zoom exactly as it is for the mouse - a finger moving 40 screen pixels
+     * should wind the same amount as a cursor moving 40. Shift-to-fine has no
+     * touch equivalent, so a two-finger drag would be the natural gesture, but
+     * that collides with pinch-to-zoom on the bench; instead the coarse drag
+     * simply stays coarse and the quantisation below keeps it usable. */
+    el.addEventListener('pointerdown', (e: PointerEvent) => {
       const ctl = (e.target as HTMLElement).closest('.pctl-dial') as HTMLElement | null;
       if (!ctl) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
 
@@ -862,9 +995,14 @@ export class Lab {
       const sy = e.clientY;
       const sv = val;
       const k = this.view.k || 1;
+      const pid = e.pointerId;
       ctl.classList.add('winding');
+      // Capture so a fast drag that leaves the 20px dial keeps winding rather
+      // than stranding mid-turn - the same reason the bench captures. */
+      try { (e.target as HTMLElement).setPointerCapture(pid); } catch { /* gone */ }
 
-      const move = (ev: MouseEvent): void => {
+      const move = (ev: PointerEvent): void => {
+        if (ev.pointerId !== pid) return;
         const span = max - min;
         // Full sweep over ~150px of drag (was 200px at span/200), so a narrow
         // range like the rheostat's 0..1 pos is still comfortable to wind.
@@ -886,25 +1024,33 @@ export class Lab {
         ctl.dataset.value = String(val);
         push(ctl, val);
       };
-      const up = (): void => {
+      const up = (ev: PointerEvent): void => {
+        if (ev.pointerId !== pid) return;
         ctl.classList.remove('winding');
-        window.removeEventListener('mousemove', move);
-        window.removeEventListener('mouseup', up);
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
       };
-      window.addEventListener('mousemove', move);
-      window.addEventListener('mouseup', up);
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
     });
   }
 
   /* ═════════════ drag ═════════════ */
 
   private _bindDrag(el: HTMLElement, entry: DeviceEntry): void {
-    el.addEventListener('mousedown', (e: MouseEvent) => {
+    /* Pointer events, for the same reason as the bench: a touch-drag on a
+     * device has to be claimed before the browser reads it as a scroll.
+     * `touch-action: none` on `.device` does the claiming; this handler is
+     * what then makes the drag work with a finger. */
+    el.addEventListener('pointerdown', (e: PointerEvent) => {
       const target = e.target as HTMLElement;
       if (target.closest('.term')) return;
       if (target.closest('.mbtn')) return;
       if (target.closest('.pctl')) return;
       if (e.button === 2) return;   // context menu
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       e.preventDefault();
       e.stopPropagation();
 
@@ -913,7 +1059,9 @@ export class Lab {
       const k = this.view.k || 1;
       const sx = e.clientX, sy = e.clientY;
       const ox = entry.x, oy = entry.y;
+      const pid = e.pointerId;
       let moved = false;
+      try { el.setPointerCapture(pid); } catch { /* gone */ }
 
       // Coalesce wire redraws to one per animation frame.
       //
@@ -935,7 +1083,8 @@ export class Lab {
         });
       };
 
-      const move = (ev: MouseEvent): void => {
+      const move = (ev: PointerEvent): void => {
+        if (ev.pointerId !== pid) return;
         if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 3) moved = true;
         // Divide the screen delta by zoom so the device tracks the cursor at
         // any scale.
@@ -945,15 +1094,18 @@ export class Lab {
         el.style.top = entry.y + 'px';
         scheduleRender();
       };
-      const up = (): void => {
-        window.removeEventListener('mousemove', move);
-        window.removeEventListener('mouseup', up);
+      const up = (ev: PointerEvent): void => {
+        if (ev.pointerId !== pid) return;
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
         // One final render so the wire lands on the exact drop position, in
-        // case the last mousemove's rAF had not fired yet.
+        // case the last pointermove's rAF had not fired yet.
         if (moved) { this.wiring.render(); this._snapCoupling(entry); }
       };
-      window.addEventListener('mousemove', move);
-      window.addEventListener('mouseup', up);
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
     });
   }
 
@@ -1120,7 +1272,67 @@ export class Lab {
     document.addEventListener('mousedown', (e: MouseEvent) => {
       if (this._ctxEl && !this._ctxEl.contains(e.target as Node)) this._closeCtx();
     });
+    // Same for touch: a tap anywhere off the menu dismisses it.
+    document.addEventListener('pointerdown', (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') return;
+      if (this._ctxEl && !this._ctxEl.contains(e.target as Node)) this._closeCtx();
+    });
     this.surface.addEventListener('wheel', () => this._closeCtx());
+
+    /* Long-press, the touch equivalent of right-click.
+     *
+     * A phone has no button 2, so without this the whole context menu - delete
+     * device, rotate, info - is unreachable on mobile. 500ms is the platform
+     * convention; the 10px slop cancels it the moment the finger moves, so a
+     * drag never pops a menu. */
+    let lpTimer: number | null = null;
+    let lpx = 0, lpy = 0;
+    let lpFired = false;
+    const cancelLongPress = (): void => {
+      if (lpTimer !== null) { clearTimeout(lpTimer); lpTimer = null; }
+    };
+
+    this.surface.addEventListener('pointerdown', (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') return;
+      if ((e.target as HTMLElement).closest('.term')) return;  // wiring tap wins
+      lpx = e.clientX; lpy = e.clientY;
+      lpFired = false;
+      cancelLongPress();
+      lpTimer = window.setTimeout(() => {
+        lpTimer = null;
+        lpFired = true;
+        const target = e.target as HTMLElement;
+        const devEl = target.closest('.device') as HTMLElement | null;
+        const wireHit = target.closest('.wirehit') as HTMLElement | null;
+        if (devEl) this._showDeviceCtx(lpx, lpy, devEl.dataset.id as string);
+        else if (wireHit) this._showWireCtx(lpx, lpy, wireHit.dataset.wid as string);
+        else this._showBenchCtx(lpx, lpy);
+      }, 500);
+    });
+
+    this.surface.addEventListener('pointermove', (e: PointerEvent) => {
+      if (lpTimer === null) return;
+      if (Math.abs(e.clientX - lpx) + Math.abs(e.clientY - lpy) > 10) cancelLongPress();
+    });
+
+    this.surface.addEventListener('pointerup', cancelLongPress);
+    this.surface.addEventListener('pointercancel', cancelLongPress);
+
+    /* Swallow the tap that ends a long-press.
+     *
+     * The first attempt set `_suppressClick = true` and cleared it on a
+     * `setTimeout(0)` - but the timer fires during the 500ms hold, long before
+     * the finger lifts, so the flag was already false when the click arrived
+     * and the menu opened and closed in the same gesture. The flag has to
+     * survive until the click it is suppressing has actually been dispatched,
+     * so it is cleared here, in the capture-phase click that follows, and
+     * cleared unconditionally so it can never get stuck on. */
+    this.surface.addEventListener('click', (e: MouseEvent) => {
+      if (!lpFired) return;
+      lpFired = false;
+      e.stopPropagation();
+      e.preventDefault();
+    }, true);
   }
 
   private _closeCtx(): void {
@@ -1315,6 +1527,12 @@ export class Lab {
   /* ═════════════ tooltip on hover ═════════════ */
 
   private _bindTooltip(): void {
+    /* Hover tooltips are meaningless on touch, and worse than useless: a tap
+     * fires `mouseover` but no dependable `mouseout`, so the tooltip sticks
+     * to the screen until something else is tapped. Skip the whole binding
+     * where the primary pointer cannot hover. */
+    if (window.matchMedia('(hover: none)').matches) return;
+
     this.surface.addEventListener('mouseover', (e: MouseEvent) => {
       const devEl = (e.target as HTMLElement).closest('.device') as HTMLElement | null;
       if (!devEl) { this._hideTooltip(); return; }
