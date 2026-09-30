@@ -30,13 +30,34 @@ function fakeLab(): any {
     titleEl: { textContent: '' },
     clear() { this.devices = []; this.wires = []; },
     fitView() {},
-    place(kind: string, x = 0, y = 0) {
+    place(kind: string, x = 0, y = 0, rot = 0) {
       const Ctor = DEVICE_KINDS[kind];
       if (!Ctor) throw new Error('unknown kind ' + kind);
       const model = new (Ctor as new () => unknown)();
-      const entry = { id: kind + '_' + ++seq, kind, x, y, model };
+      const entry = { id: kind + '_' + ++seq, kind, x, y, rot, model };
       this.devices.push(entry);
       return entry;
+    },
+    /**
+     * Mirror of `Lab.loadBench`, reduced to what this test observes.
+     *
+     * The real one also re-points DOM nodes and rebuilds the netlist; here the
+     * only thing that matters is that a device keeps its SAVED id (so wires
+     * resolve) and that the wires land. Kept deliberately dumb — if the real
+     * loadBench ever stops preserving ids, that is a different test's job to
+     * catch, and faking the machinery here would hide it.
+     */
+    loadBench(data: { devices: Array<Record<string, any>>; wires: Array<Record<string, any>> }) {
+      this.clear();
+      for (const d of data.devices) {
+        const entry = this.place(d.kind, d.x, d.y, d.rot || 0);
+        entry.id = d.id;
+        entry.model.id = d.id;
+        if (d.state) entry.state = d.state;
+      }
+      for (const w of data.wires) {
+        this.wiring.add(w.aDev, w.aTerm, w.bDev, w.bTerm);
+      }
     },
     wiring: {
       add(aDev: string, aTerm: string, bDev: string, bTerm: string) {

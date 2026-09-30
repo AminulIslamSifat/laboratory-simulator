@@ -285,52 +285,10 @@ function captureBench(): BenchFile {
  * drift — a fix to the id-restoration dance below has to land once.
  */
 function restoreBench(data: BenchFile): void {
-  const L = ensureLab();
-  L.clear();
-
-  data.devices.forEach((d) => {
-    const entry = L.place(d.kind, d.x, d.y);
-    if (!entry) return;
-
-    // Grab the DOM node BEFORE touching ids.
-    //
-    // `place()` minted a fresh id and rendered the node with it. The node's
-    // dataset must be re-pointed to the SAVED id, and the only moment we can
-    // find it is while it still carries the fresh id. The old code queried
-    // AFTER assigning `entry.id = d.id`, so the selector looked for a node
-    // that did not exist yet and `node` was always null: dataset.id kept the
-    // fresh id while the netlist/devices used the saved one. Every wire then
-    // failed to draw (pointOf() found no node for the saved id) and every
-    // terminal click resolved to an id not in `devices` - the loaded bench
-    // looked stale and dead. Capture first, swap second.
-    const freshId = entry.id;
-    const node = L.world.querySelector('.device[data-id="' + freshId + '"]') as HTMLElement | null;
-
-    L.netlist.removeDevice(freshId);
-    entry.id = d.id;
-    entry.model.id = d.id;
-    L.netlist.addDevice(entry.model);
-
-    if (node) node.dataset.id = d.id;
-
-    // Rotation is restored BEFORE any wire is drawn, so the first render
-    // already has the terminals where the wires expect them.
-    entry.rot = d.rot || 0;
-    if (node) L.applyRotationPublic(node, entry);
-
-    // Restore the panel: isolator, rail switches, variac, wiper dials, rotor
-    // speed. Geometry alone is not the experiment - a bench that reloads with
-    // every switch off is a dead bench that looks broken.
-    const m = entry.model as { setState?: (s: Record<string, unknown>) => void };
-    if (d.state && typeof m.setState === 'function') m.setState(d.state);
-  });
-
-  (data.wires || []).forEach((w) => {
-    L.wiring.add(w.aDev, w.aTerm, w.bDev, w.bTerm);
-  });
-
-  L._renderMeters();
-  L._sync();
+  // The rebuild itself lives on the Lab now, because a PRESET needs it too —
+  // see `Lab.loadBench`. A second copy here is exactly the drift this
+  // delegation exists to prevent.
+  ensureLab().loadBench(data);
 }
 
 /**

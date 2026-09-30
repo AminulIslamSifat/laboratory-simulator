@@ -30,6 +30,7 @@ import type { Lab, Preset } from './lab.js';
 import { EQUIPMENT } from '../devices/index.js';
 import type { DCSupply, DCMachine } from '../devices/index.js';
 import type { Rheostat } from '../devices/rheostat/model.js';
+import { EXP04_BENCH, EXP04_IDS } from './exp04-bench.js';
 
 /** A wire as `[fromKind, fromTerm, toKind, toTerm]`. */
 type WireSpec = [string, string, string, string];
@@ -378,94 +379,24 @@ export const PRESETS: Record<string, Preset> = {
     label: 'Exp 04 \u00b7 DC Shunt Generator',
     sub: 'motor-coupled \u00b7 V_t vs I_L',
     build(lab) {
-      lab.clear();
-      lab.place('power_supply', 20, 20);
-
-      // Prime mover + generator on a common centre line, with the coupling in
-      // the gap between them. The coupling is a LOGIC device: MA/MB remember
-      // which machine hangs off each port so the simulator's mechanical pass
-      // can couple their rotors, and the wire layer draws the shaft lines.
-      // Its own size is decoration, so it does NOT need its ports to touch
-      // the machines - it just has to sit between them and not overlap.
+      // This preset is the REAL bench, loaded verbatim from a working session
+      // rather than re-derived from a description of it.
       //
-      // The 3φ motor sprite is drawn VERTICAL (shaft on its bottom face), so
-      // it is rotated 270° to point that shaft right, toward the generator.
-      // The generator keeps its native orientation (shaft on the right) and
-      // is flipped 180° so the two shafts face each other.
-      // The power supply occupies [20..405] x [20..459]. A 270° rotation is
-      // about the device centre, so the motor's box extends LEFT of its
-      // placement x by (h/2 - w/2) = 59.5px. Placing at 500 puts its left
-      // edge at 440.5, clear of the supply's 405.
-      const MOTOR_X = 500;
-      const MOTOR_Y = 120;
-      // Rotation is passed AT PLACEMENT, not set afterwards: place() renders
-      // the device immediately, so a rot assigned on the next line was ignored
-      // and the motor still stood vertical.
-      lab.place('async_motor_3p', MOTOR_X, MOTOR_Y, 270);
-
-      // Coupling sits in the clear gap after the motor (rotated box ends at
-      // 979.5).
-      lab.place('coupling', 1040, 240);
-
-      // Generator, flipped 180°, placed clear of the coupling's right edge
-      // (1240) with a gap.
-      lab.place('dc_machine', 1320, 165, 180);
-
-      // TWO rheostats: the FIELD unit (left) and the LOAD unit (right).
-      // Same device kind, which is why the load cannot go through wireAll() -
-      // that resolves an endpoint by KIND and would hand back the field unit
-      // for both. wireAll() still wires the FIELD one because it is placed
-      // first; the load unit is wired by id further down.
-      lab.place('rheostat', 460, 700);
-      const loadRh = lab.place('rheostat', 790, 700);
-      lab.place(RACK, 1120, 700);
-
-      wireAll(lab, [
-        // Prime mover: 3φ motor in star, fed from the fixed 400 V line.
-        // Lines on the phase STARTS (U1 V1 W1); star point on the ends.
-        ['power_supply', '3P-L1', 'async_motor_3p', 'U1'],
-        ['power_supply', '3P-L2', 'async_motor_3p', 'V1'],
-        ['power_supply', '3P-L3', 'async_motor_3p', 'W1'],
-        ['async_motor_3p', 'U2', 'async_motor_3p', 'V2'],
-        ['async_motor_3p', 'V2', 'async_motor_3p', 'W2'],
-        ['async_motor_3p', 'W2', 'power_supply', '3P-PE'],
-        // mechanical link
-        ['async_motor_3p', 'SHAFT', 'coupling', 'MA'],
-        ['coupling', 'MB', 'dc_machine', 'SHAFT'],
-        // Shunt field: A1 -> F1, the FIELD WINDING, then F2 -> rheostat -> A2.
-        // The rheostat must sit in SERIES with the field winding. Wiring it
-        // F1 -> rheostat -> F2 put it in PARALLEL with the winding, so the
-        // 30 ohm rheostat shorted the 2500 ohm field and the machine drew
-        // 5.6 A of field current instead of the rated 0.5 A.
-        //
-        // BOTH rheostat elements are in series here, not just A: the current
-        // runs F2 -> A_TOP -> [RA] -> A_BOT -> B_TOP -> [RB] -> B_RED -> A2,
-        // so the field sees RA + RB (up to 1000 ohm). That doubles the range
-        // and gives finer control of the field current, which is what sets
-        // the no-load terminal voltage.
-        ['dc_machine', 'A1', 'dc_machine', 'F1'],
-        ['dc_machine', 'F2', 'rheostat', 'A_TOP'],
-        ['rheostat', 'A_BOT', 'rheostat', 'B_TOP'],
-        ['rheostat', 'B_RED', 'dc_machine', 'A2'],
-        // Load return; the rack ammeter sits on the RETURN leg (N-R). The
-        // load rheostat's own wires are added by id below, not here.
-        [RACK, AM_IN, 'dc_machine', 'A2'],
-        // voltmeter across the terminals
-        [RACK, VM_P, 'dc_machine', 'A1'],
-        [RACK, VM_N, 'dc_machine', 'A2']
-      ]);
-
-      // Load rheostat, wired by id because it is the SECOND of its kind:
-      // A1 -> A_TOP -> [RA] -> A_BOT -> B_TOP -> [RB] -> B_RED -> rack
-      // ammeter -> A2. Both elements in series, so the load is a smooth
-      // 0-1000 ohm - the lab's rheostat-on-the-return-leg, not a stepped bank.
-      const dcEntry = lab.devices.find((d) => d.kind === 'dc_machine');
-      const rackEntry = lab.devices.find((d) => d.kind === RACK);
-      if (loadRh && dcEntry && rackEntry) {
-        lab.wiring.add(dcEntry.id, 'A1', loadRh.id, 'A_TOP');
-        lab.wiring.add(loadRh.id, 'A_BOT', loadRh.id, 'B_TOP');
-        lab.wiring.add(loadRh.id, 'B_RED', rackEntry.id, AM_OUT);
-      }
+      // Everything the hand-written version below used to do still applies as
+      // intent, but the actual coordinates, rotations and — critically — the
+      // WIRING came off the saved bench, so the preset matches the machine on
+      // the desk instead of a plausible reconstruction of it:
+      //
+      //   · the field is tapped through DIN 2's own ammeter jacks
+      //     (F2 -> rheostat -> DIN2+ -> DIN2- -> F1), so the field current is
+      //     read in line rather than merely inferred
+      //   · the load hangs off the d4 wattmeter shunt (AA+2/AA-2), with AA+/AA-
+      //     tapping the armature across it — a 4-wire measurement, which is
+      //     what that bay is for
+      //
+      // The old reconstruction is gone rather than kept alongside, because
+      // two sources of truth for one experiment is how they drift apart.
+      lab.loadBench(EXP04_BENCH);
       lab.titleEl.textContent = 'Experiment 04 \u00b7 DC Shunt Generator \u2014 External Characteristic';
       lab.fitView();
     },
@@ -473,24 +404,31 @@ export const PRESETS: Record<string, Preset> = {
       energise(lab, (m) => {
         m.rails.f3p.on = true;   // fixed 400 V 3phi line drives the prime mover
       });
-      // The reference sets the field rheostat to give 220 V at no load, at
-      // which point the field current is 0.088 A. With a 2500 ohm field that
-      // means almost no added resistance - the machine self-excites on the
-      // residual flux and the rheostat is trimmed from near zero.
-      // Two rheostats: [0] is the FIELD unit, [1] the LOAD unit. modelOf()
-      // returns the FIRST of a kind, so it can only ever reach the field one -
-      // index into the placed list instead.
-      const rhs = lab.devices
-        .filter((d) => d.kind === 'rheostat')
-        .map((d) => d.model as unknown as Rheostat);
+
+      // Address the two rheostats BY SAVED ID, not by index.
+      //
+      // The bench has two of the same kind, so `devices.filter(kind)` order is
+      // the only thing an index would be keyed to — and that order comes from
+      // the saved array, which is not a contract. `EXP04_IDS` names them by
+      // the role the WIRING gives them, so swapping them in the file cannot
+      // silently turn the field trim into a load setting.
+      const byId = new Map(lab.devices.map((d) => [d.id, d.model as unknown as Rheostat]));
+      const field = byId.get(EXP04_IDS.FIELD_RH);
+      const load = byId.get(EXP04_IDS.LOAD_RH);
+
       // Field trimmed near zero: the machine self-excites on residual flux and
       // reaches ~220 V at no load with almost no added field resistance.
-      if (rhs[0]) { rhs[0].posA = 0.03; rhs[0].posB = 0.03; }
+      if (field) { field.posA = 0.03; field.posB = 0.03; }
       // Load at max resistance = lightest load, the start of the
       // characteristic. Wind it down to pull current.
-      if (rhs[1]) { rhs[1].posA = 1; rhs[1].posB = 1; }
+      if (load) { load.posA = 1; load.posB = 1; }
 
-      // The load current is read off the shared series coil (d3, A mode).
+      // The DIN bay's d3 display is the ammeter, and its own mode default is
+      // already 'A' — but the ARMETER the experiment reads is the d4 wattmeter
+      // on the load shunt, so put that one in A too.
+      const rack = lab.devices.find((d) => d.kind === RACK);
+      const rm = rack?.model as { setDisplayMode?: (id: string, mode: string) => void } | undefined;
+      if (rm && typeof rm.setDisplayMode === 'function') rm.setDisplayMode('d4', 'A');
       readAmps(lab);
     }
   },

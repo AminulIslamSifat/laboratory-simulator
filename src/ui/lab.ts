@@ -323,6 +323,67 @@ export class Lab {
     }
   }
 
+  /**
+   * Rebuild the bench from a serialised snapshot.
+   *
+   * Lives here rather than in the app shell because a PRESET needs it too.
+   * The old copy was a private function in `app.ts`, so a preset could only
+   * rebuild a bench by calling `place()` and `wiring.add()` itself — which
+   * means re-deriving the id-restoration dance below, and getting it wrong.
+   *
+   * The subtlety, unchanged from the original: `place()` mints a FRESH id and
+   * renders the DOM node with it, but the wires in the snapshot reference the
+   * SAVED ids. The node has to be found while it still carries the fresh id,
+   * then both the entry and the node re-pointed at the saved one. Querying
+   * after the swap looks for a node that does not exist yet, and every wire
+   * then fails to draw against a device the lab cannot find.
+   */
+  loadBench(data: { devices: readonly unknown[]; wires: readonly unknown[] }): void {
+    this.clear();
+
+    const devices = data.devices as Array<{
+      id: string; kind: string; x: number; y: number; rot?: number;
+      state?: Record<string, unknown>;
+    }>;
+    const wires = data.wires as Array<{
+      aDev: string; aTerm: string; bDev: string; bTerm: string;
+    }>;
+
+    devices.forEach((d) => {
+      const entry = this.place(d.kind, d.x, d.y);
+      if (!entry) return;
+
+      const freshId = entry.id;
+      const node = this.world.querySelector('.device[data-id="' + freshId + '"]') as HTMLElement | null;
+
+      this.netlist.removeDevice(freshId);
+      entry.id = d.id;
+      entry.model.id = d.id;
+      this.netlist.addDevice(entry.model);
+
+      if (node) node.dataset.id = d.id;
+
+      // Rotation BEFORE the wires: the first render must already have the
+      // terminals where the wires expect them.
+      entry.rot = d.rot || 0;
+      if (node) this.applyRotationPublic(node, entry);
+
+      // Restore the panel: isolator, rail switches, variac, wiper dials, rotor
+      // speed. Geometry alone is not the experiment — a bench that reloads
+      // with every switch off is a dead bench that looks broken.
+      const m = entry.model as { setState?: (s: Record<string, unknown>) => void };
+      if (d.state && typeof m.setState === 'function') m.setState(d.state);
+    });
+
+    wires.forEach((w) => {
+      this.wiring.add(w.aDev, w.aTerm, w.bDev, w.bTerm);
+    });
+
+    this._renderMeters();
+    this._sync();
+    this.wiring.render();
+  }
+
   /* ═════════════ view: pan + zoom ═════════════ */
 
   _applyView(): void {
