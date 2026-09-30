@@ -28,7 +28,7 @@
 
 import type { Lab, Preset } from './lab.js';
 import { EQUIPMENT } from '../devices/index.js';
-import type { DCSupply } from '../devices/index.js';
+import type { DCSupply, DCMachine } from '../devices/index.js';
 import type { Rheostat } from '../devices/rheostat/model.js';
 
 /** A wire as `[fromKind, fromTerm, toKind, toTerm]`. */
@@ -647,7 +647,12 @@ export const PRESETS: Record<string, Preset> = {
     build(lab) {
       lab.clear();
       lab.place('power_supply', 30, 30);
-      lab.place('dc_machine', 460, 30);
+      const dc = lab.place('dc_machine', 460, 30);
+      // Separately excited here: the field hangs off the main DC rail via
+      // F1/F2, so the machine's internal shunt link (F2≡A2) has to be off.
+      // Left on, it ties the field return to the armature return and the load
+      // bank ends up measuring a merged field+armature current.
+      (dc?.model as DCMachine | undefined)?.setShuntField(false);
       lab.place('load_bank', 30, 520);
       lab.place(RACK, 640, 520);
 

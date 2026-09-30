@@ -23,6 +23,30 @@ interface RackChannel {
   mode: 'V' | 'A' | 'W';
   pos: string[];
   neg: string[];
+
+  /**
+   * Voltage-sense jacks, when they are a SEPARATE pair from the current path.
+   *
+   * The panel is 4-wire: a display with two jack pairs has one pair carrying
+   * the branch current (through a shunt) and a second pair tapping the
+   * voltage across the load. The AA bay is wired exactly that way - AA+/AA-
+   * sense the armature while AA+2/AA-2 carry the load current - so a single
+   * display can report volts AND amps at once, which is what a wattmeter is.
+   *
+   * When omitted, the channel's `pos`/`neg` are the voltage pair AND the
+   * current pair is the same posts (a 2-jack meter).
+   */
+  vpos?: string[];
+  vneg?: string[];
+
+  /**
+   * SERIES ammeter: the `pos`/`neg` posts carry the branch current through a
+   * shunt, rather than being a high-Z voltage sense. A channel with a
+   * separate `vpos`/`vneg` is BOTH: current through pos/neg, voltage across
+   * vpos/vneg.
+   */
+  series?: boolean;
+
   /**
    * Three-phase voltmeter display.
    *
@@ -109,21 +133,40 @@ export class MeterRack implements Device {
         pos: ['L1b', 'L2b', 'L3b'], neg: ['Nb'], lines: true,
         V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
       },
-      // d2 was labelled 'MINS' but wired to DIN1± — it has always read the
-      // DIN meter bay, not the MINS SCOPY box. Label now matches the wire.
+      // The DIN bay brings out DIN1± and DIN2±. On this bench those two pairs
+      // are wired to TWO DIFFERENT branches:
+      //
+      //   DIN1+ / DIN1-  ->  A1 / A2        (the ARMATURE)
+      //   DIN2+ / DIN2-  ->  F1 / rheostat  (the FIELD loop)
+      //
+      // so d2 is the armature monitor and d3 is the field monitor, and they
+      // read DIFFERENT things. Binding both to the same four jacks (which an
+      // earlier revision did) made the two LCDs show identical numbers - two
+      // meters, one measurement, which is not two meters at all.
+      //
+      // Each is a 2-jack instrument here: d2 sits ACROSS the armature (a
+      // voltmeter) and d3 sits IN LINE with the field (an ammeter). Its V, I
+      // and W are all computed from its own two posts - whichever of them is
+      // meaningful for that connection is the one worth reading.
       {
         id: 'd2', label: 'DIN 1', mode: 'V',
         pos: ['DIN1+'], neg: ['DIN1-'],
         V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
       },
       {
-        id: 'd3', label: 'AZ-VIDC', mode: 'A',
-        pos: ['DIN2+'], neg: ['DIN2-'],
+        id: 'd3', label: 'DIN 2', mode: 'A',
+        pos: ['DIN2-'], neg: ['DIN2+'], series: true,
         V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
       },
       {
-        id: 'd4', label: 'AZ-VIDC 2', mode: 'W',
-        pos: ['AA+', 'AA+2'], neg: ['AA-', 'AA-2'],
+        id: 'd4', label: 'AZ-VIDC 2', mode: 'A',
+        // The AA bay is a 4-wire wattmeter: AA+2/AA-2 carry the load current
+        // through the shunt, while AA+/AA- tap the voltage across the
+        // armature. Both pairs are used, so this display reports volts AND
+        // amps of its own branch at once - which is exactly why the bay has
+        // four jacks and not two.
+        pos: ['AA+2'], neg: ['AA-2'], series: true,
+        vpos: ['AA+'], vneg: ['AA-'],
         V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
       }
     ];
@@ -174,7 +217,10 @@ export class MeterRack implements Device {
     // The two DIN pairs used to be bonded (DIN1 is DIN2), which tied the top
     // DIN meter to the bottom one. They are separate channels, so they must
     // not share a node.
-    B.push(['AA+', 'AA+2']);
+    //
+    // AA+ is NOT bonded to AA+2 - that pair is the ammeter's current path and
+    // a bond across it would short the shunt. AA- to AA-2 stays bonded: that
+    // is the straight return leg, one node either side of the bay.
     B.push(['AA-', 'AA-2']);
 
     this.VRange = opts.VRange ?? 500;
@@ -225,9 +271,10 @@ export class MeterRack implements Device {
     // frame, so all three are already in hand - without this the display would
     // keep the previous mode's number until the solver runs another step,
     // which never happens if the bench is stopped.
-    c.shown = mode === 'V' ? c.V : mode === 'A' ? c.I : c.W;
-    c.over =
-      mode === 'V' ? Math.abs(c.V) > this.VRange * 1.2
+    c.shown = c.series ? c.I : mode === 'V' ? c.V : mode === 'A' ? c.I : c.W;
+    c.over = c.series
+      ? Math.abs(c.I) > this.ARange * 1.2
+      : mode === 'V' ? Math.abs(c.V) > this.VRange * 1.2
       : mode === 'A' ? Math.abs(c.I) > this.ARange * 1.2
       : Math.abs(c.W) > this.WRange * 1.2;
   }
@@ -240,12 +287,37 @@ export class MeterRack implements Device {
       stampConductance(mna, a, b, g);
     };
 
-    // Every display presents a high-Z voltmeter, and an A-mode channel does
-    // NOT stamp a shunt of its own - it reads the rack's shared in/out series
-    // coil instead. That coil is the rack's ONE ammeter movement, stamped
-    // below; a display in A mode is a readout of it, exactly like real gear.
-    // (A per-channel 0.01 ohm shunt across a voltmeter pair would be 100 S
-    // straight across the mains and would trip the variable-AC breaker.)
+    // A display is ONE instrument with two personalities, and which one it
+    // wears is the V / A button.
+    //
+    //   V (and W) - a HIGH-Z VOLTMETER. It parallels the thing it measures.
+    //   A         - a SERIES AMMETER. Its + and - posts are the two ends of
+    //               its shunt, and the measured current flows THROUGH it.
+    //
+    // Stamping a megohm for every channel regardless of mode was a real bug:
+    // a student wiring a DC ammeter in series with the shunt field - F1 to
+    // DIN2-, DIN2+ back through the rheostat to F2, exactly as the ammeter
+    // goes in on the bench - got a 1 MOhm break in the middle of the field
+    // circuit. The machine could not excite, and every reading sat at zero
+    // with nothing on the panel to say why. A meter that cannot pass current
+    // cannot measure it.
+    //
+    // EVERY display is an INDEPENDENT instrument.
+    //
+    // Each channel stamps its OWN shunt between its OWN two posts. Whatever
+    // the student wires across those two jacks is the branch that display
+    // measures, and nothing about it touches any other display. This is the
+    // whole point of having four meters on the panel: four separate
+    // measurements, four separate branches.
+    //
+    // The old model ran ONE shared N-R shunt and let every non-series
+    // channel borrow its current, so three displays reported the same number
+    // no matter where they were wired. A meter that reads someone else's
+    // branch is not a meter.
+    //
+    // The shunt is tiny (0.01 ohm) so it is electrically invisible to the
+    // branch it sits in, but not so tiny that the solver loses the drop in
+    // its noise floor - at 1 A it is 10 mV, which resolves cleanly.
     for (const c of this.channels) {
       const resolve = (names: string[]): number | undefined => {
         for (const name of names) {
@@ -262,40 +334,40 @@ export class MeterRack implements Device {
         // even with a live supply on them.
         const n = resolve(c.neg);
         for (const p of c.pos) put(resolve([p]), n, 1 / 1e6);
+      } else if (c.series) {
+        // This display sits IN the current path: its own two posts carry the
+        // branch current, and its own shunt turns that current into a
+        // measurable drop. Independent of every other display.
+        put(resolve(c.pos), resolve(c.neg), 1 / this.shunt);
+        // 4-wire display: a SECOND pair taps the voltage across the load.
+        // High-Z, so it does not disturb the branch it is sensing.
+        if (c.vpos && c.vneg) put(resolve(c.vpos), resolve(c.vneg), 1 / 1e6);
       } else {
+        // This display sits ACROSS its branch - a high-Z voltmeter. It still
+        // reads its OWN two posts, but it must not load the branch, so no
+        // shunt is stamped. (Stamping 0.01 ohm across an armature would short
+        // it and kill the machine.) A current reading on an across-wired
+        // display is therefore ~0, which is the truth: no current flows
+        // through a voltmeter.
         put(resolve(c.pos), resolve(c.neg), 1 / 1e6);
       }
     }
-
-    // Shared series shunt.
-    const sa = netOf(this.id, this.seriesPos[0]);
-    const sb = netOf(this.id, this.seriesNeg[0]);
-    put(sa, sb, 1 / this.shunt);
   }
 
   update(_dt: number, sol: Solution): void {
     const sizes = this.netSizes(sol);
     const resolve = (names: string[]): number | undefined => this.resolve(sol, names, sizes);
 
-    // The shared series shunt IS the rack's ammeter movement. A channel in A
-    // mode reads this current; a channel in W mode multiplies its own voltage
-    // across the load by it - a wattmeter is a voltmeter times an ammeter.
-    // (Reading raw/shunt off a channel's OWN terminals would just divide its
-    // own voltage by 0.01 and report tens of kiloamps.)
-    const sa = resolve(this.seriesPos);
-    const sb = resolve(this.seriesNeg);
-    const aTrue =
-      sa !== undefined && sb !== undefined
-        ? ((sol.V[sa] ?? 0) - (sol.V[sb] ?? 0)) / this.shunt
-        : 0;
-    this.A = aTrue + sol.rng.gauss() * Math.abs(aTrue) * this.noise;
-    this.aOver = Math.abs(this.A) > this.ARange * 1.2;
-
+    // EVERY channel reads its OWN branch. Its voltage is the drop across its
+    // own two posts; its current is the drop across its OWN shunt sitting on
+    // those same two posts, divided by the shunt resistance. Nothing is
+    // borrowed from another channel, so two displays wired to two different
+    // loads show two different numbers - which is the entire reason a rack
+    // has more than one meter on it.
     for (const c of this.channels) {
       const a = resolve(c.pos);
       const b = resolve(c.neg);
-      const vTrue = a !== undefined && b !== undefined ? (sol.V[a] ?? 0) - (sol.V[b] ?? 0) : 0;
-      c.V = vTrue + sol.rng.gauss() * Math.abs(vTrue) * this.noise;
+
       if (c.lines) {
         // Each line against the shared neutral. The LCD shows all three at
         // once, so the numbers have to be computed here, not picked one-per-
@@ -309,16 +381,40 @@ export class MeterRack implements Device {
               : 0;
           return raw + sol.rng.gauss() * Math.abs(raw) * this.noise;
         });
-        c.V = c.Vline[0] ?? c.V;
+        c.V = c.Vline[0] ?? 0;
+        // A three-line voltmeter draws no current of its own.
+        c.I = 0;
+        c.A = 0;
+        c.W = 0;
+        c.shown = c.mode === 'V' ? c.V : c.mode === 'A' ? c.I : c.W;
+        c.over = c.mode === 'V' ? Math.abs(c.V) > this.VRange * 1.2 : false;
+        continue;
       }
-      // The current half of every A-mode display is the rack's single series
-      // coil. The bench has ONE ammeter movement (the in/out shunt); every
-      // A-mode head is a readout of that movement, exactly like a real rack
-      // where several meters share one shunt. A display therefore shows the
-      // coil current regardless of which posts its own voltage inputs use.
-      c.I = this.A;
-      c.A = this.A;
-      c.W = c.V * this.A;
+
+      // Voltage comes from the channel's OWN voltage pair when it has one
+      // (4-wire display), otherwise from its current posts.
+      const va = c.vpos ? resolve(c.vpos) : a;
+      const vb = c.vneg ? resolve(c.vneg) : b;
+      const vTrue = va !== undefined && vb !== undefined ? (sol.V[va] ?? 0) - (sol.V[vb] ?? 0) : 0;
+      c.V = vTrue + sol.rng.gauss() * Math.abs(vTrue) * this.noise;
+
+      // Current through this channel's OWN shunt, but only if it HAS one.
+      // A series display carries the branch current through its posts, so the
+      // drop there is I * shunt. An across display is a voltmeter with no
+      // shunt - no current flows through it, and reporting one would be a
+      // lie. Each display's answer depends only on its own wiring.
+      const iDrop = a !== undefined && b !== undefined ? (sol.V[a] ?? 0) - (sol.V[b] ?? 0) : 0;
+      const iOwn =
+        c.series && a !== undefined && b !== undefined && a !== b
+          ? iDrop / this.shunt
+          : 0;
+      c.I = iOwn + sol.rng.gauss() * Math.abs(iOwn) * this.noise;
+      c.A = c.I;
+      c.W = c.V * c.I;
+
+      // The V / A / W button only chooses which of the channel's OWN three
+      // numbers the LCD shows. It never changes what the channel measures or
+      // how it is wired - switching modes cannot break the circuit.
       c.shown = c.mode === 'V' ? c.V : c.mode === 'A' ? c.I : c.W;
       c.over =
         c.mode === 'V' ? Math.abs(c.V) > this.VRange * 1.2
@@ -327,7 +423,9 @@ export class MeterRack implements Device {
     }
 
     this.V = this.channels[0]?.V ?? 0;
+    this.A = this.channels[0]?.I ?? 0;
     this.W = this.V * this.A;
+    this.aOver = Math.abs(this.A) > this.ARange * 1.2;
     this.vOver = Math.abs(this.V) > this.VRange * 1.2;
   }
 

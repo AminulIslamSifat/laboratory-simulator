@@ -91,6 +91,16 @@ export class SyncGen implements Machine {
     this.Nrated = opts.Nrated ?? 1250;
   }
 
+  /** Rotor speed, so a reloaded bench resumes turning at the same speed. */
+  getState(): Record<string, unknown> {
+    return { omega: this.omega };
+  }
+
+  setState(state: Record<string, unknown>): void {
+    const n = typeof state.omega === 'number' ? state.omega : Number(state.omega);
+    if (Number.isFinite(n)) this.omega = n;
+  }
+
   stamp(mna: Mna, netOf: NetOf): void {
     if (this.thermal.dead) return;
 

@@ -79,6 +79,13 @@ export interface LabDeps {
   statusEl: HTMLElement;
   titleEl: HTMLElement;
   toast?: HTMLElement;
+  /**
+   * Fired whenever the bench gains or loses unsaved changes.
+   *
+   * The shell owns the floating Save button, so the lab reports the state
+   * rather than painting it — the lab has no idea a FAB exists.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /** A preset bench: builds its devices and optionally energises them. */
@@ -192,6 +199,28 @@ export class Lab {
   statusEl: HTMLElement;
   titleEl: HTMLElement;
   toast: HTMLElement | undefined;
+  onDirtyChange: ((dirty: boolean) => void) | undefined;
+
+  /**
+   * True when the bench has changes that are not on the server.
+   *
+   * Flipped by `_sync()`, which is the single choke point every topology
+   * change already passes through — placing a device, adding a wire, a
+   * preset load, a clear. Using that one hook means no mutation site had to
+   * be found and instrumented, and a future one cannot forget.
+   */
+  dirty = false;
+
+  /**
+   * Depth of programmatic edits that must NOT mark the bench dirty.
+   *
+   * `restoreBench` calls `place()` per device and `_sync()` per wire, so a
+   * load would otherwise leave the bench looking unsaved the instant it was
+   * loaded. A counter rather than a boolean because loading a bench can nest
+   * (a preset load inside a restore), and an inner `resume` that reset a
+   * boolean would let the outer half re-dirty it.
+   */
+  private _dirtyHold = 0;
 
   netlist: Netlist;
   sim: Simulator;
@@ -234,6 +263,7 @@ export class Lab {
     this.statusEl = deps.statusEl;
     this.titleEl = deps.titleEl;
     this.toast = deps.toast;
+    this.onDirtyChange = deps.onDirtyChange;
 
     this.netlist = new Netlist();
     this.sim = new Simulator(this.netlist);
@@ -270,6 +300,11 @@ export class Lab {
   }
 
   clear(): void {
+    // Clearing an already-empty bench is a no-op, not an edit. Without this
+    // the trailing `_sync()` would mark a pristine bench unsaved and the
+    // floating Save button would appear over nothing.
+    const wasEmpty = this.devices.length === 0 && this.wiring.wires.length === 0;
+
     this.stop();
     this._reset();
     this.wiring.clear();
@@ -279,7 +314,13 @@ export class Lab {
     (this.smokeLayer as HTMLElement).querySelectorAll('[data-smoke]').forEach((n) => n.remove());
     this.titleEl.textContent = 'Laboratory \u00b7 Empty Bench';
     this._renderMeters();
-    this._sync();
+
+    if (wasEmpty) {
+      this._dirtyHold += 1;
+      try { this._sync(); } finally { this._dirtyHold -= 1; }
+    } else {
+      this._sync();
+    }
   }
 
   /* ═════════════ view: pan + zoom ═════════════ */
@@ -1822,6 +1863,47 @@ export class Lab {
 
     const hint = document.getElementById('bench-hint');
     if (hint) hint.style.display = n ? 'none' : '';
+
+    // Every topology change funnels through here, so this is the one place
+    // that has to know about the dirty flag. Guarded by the hold counter so
+    // a load or a clear can settle without marking itself unsaved.
+    if (this._dirtyHold === 0) this._setDirty(true);
+  }
+
+  /** Set the dirty flag and notify, only when it actually changes. */
+  private _setDirty(next: boolean): void {
+    if (this.dirty === next) return;
+    this.dirty = next;
+    if (this.onDirtyChange) this.onDirtyChange(next);
+  }
+
+  /**
+   * Declare the bench clean. Called by the shell after a successful save.
+   *
+   * Public because the save path lives in `app.ts` — the lab never saves
+   * anything itself, it only knows whether what is on the bench matches what
+   * was last written.
+   */
+  markClean(): void {
+    this._setDirty(false);
+  }
+
+  /**
+   * Run `fn` with dirty-marking suppressed, then mark the bench clean.
+   *
+   * This is the load/clear path: it rebuilds the surface through the same
+   * `place()` and `_sync()` calls a user edit would use, and without the
+   * hold every one of them would light the unsaved indicator on a bench that
+   * is, by definition, exactly what was just read back.
+   */
+  withoutDirty(fn: () => void): void {
+    this._dirtyHold += 1;
+    try {
+      fn();
+    } finally {
+      this._dirtyHold -= 1;
+    }
+    this._setDirty(false);
   }
 
   private _setStatus(text: string, cls: string): void {

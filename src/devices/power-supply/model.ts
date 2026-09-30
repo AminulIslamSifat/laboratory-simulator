@@ -306,6 +306,46 @@ export class DCSupply implements Device {
     a[key] = Math.max(a[key] ?? 0, i);
   }
 
+  /**
+   * Panel snapshot: the isolator, the e-stop latch, and every rail's switch,
+   * setpoint and tap.
+   *
+   * Without this a reloaded bench came back with the isolator open and all
+   * five rails off, so a perfectly wired experiment sat dead and looked
+   * broken. The switch positions ARE part of the experiment.
+   */
+  getState(): Record<string, unknown> {
+    const rails: Record<string, unknown> = {};
+    for (const k of Object.keys(this.rails) as RailKey[]) {
+      const r = this.rails[k];
+      rails[k] = { on: r.on, set: r.set, tap: r.tap, f: r.f };
+    }
+    return { master: this.master, estop: this.estop, enabled: this.enabled, rails };
+  }
+
+  setState(state: Record<string, unknown>): void {
+    if (typeof state.master === 'boolean') this.master = state.master;
+    if (typeof state.estop === 'boolean') this.estop = state.estop;
+    if (typeof state.enabled === 'boolean') this.enabled = state.enabled;
+
+    const rails = state.rails as Record<string, Record<string, unknown>> | undefined;
+    if (!rails || typeof rails !== 'object') return;
+    for (const k of Object.keys(this.rails) as RailKey[]) {
+      const src = rails[k];
+      if (!src || typeof src !== 'object') continue;
+      const r = this.rails[k];
+      if (typeof src.on === 'boolean') r.on = src.on;
+      if (typeof src.set === 'number' && Number.isFinite(src.set)) {
+        r.set = Math.max(0, Math.min(r.Vmax, src.set));
+        // A tapped secondary follows its tap instantly; a variac ramps, so
+        // leave V alone and let soft-start bring it up from zero.
+        if (r.tau === 0) r.V = r.set;
+      }
+      if (typeof src.tap === 'number') r.tap = src.tap;
+      if (typeof src.f === 'number' && Number.isFinite(src.f)) r.f = src.f;
+    }
+  }
+
   setControl(id: string, value: number | string | boolean): void {
     const R = this.rails;
     const num = Number(value);

@@ -130,6 +130,20 @@ export interface Device {
 
   /** V / A / W selector on a multi-mode display. */
   setDisplayMode?(displayId: string, mode: string): void;
+
+  /**
+   * Snapshot the device's panel state for the save file.
+   *
+   * A bench is not just its devices and wires. The supply boots with its
+   * isolator open and every rail off, and a rheostat boots at its
+   * construction default - so a saved bench that only recorded geometry
+   * reloaded as a correctly-wired, completely dead bench with every switch
+   * and dial at zero. Whatever a student set by hand has to come back.
+   */
+  getState?(): Record<string, unknown>;
+
+  /** Restore a snapshot written by `getState()`. Must tolerate junk. */
+  setState?(state: Record<string, unknown>): void;
 }
 
 /**

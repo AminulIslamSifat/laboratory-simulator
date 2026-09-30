@@ -83,6 +83,16 @@ export class Motor3P implements Machine {
     return (120 * this.f) / this.p;
   }
 
+  /** Rotor speed, so a reloaded bench does not restart from standstill. */
+  getState(): Record<string, unknown> {
+    return { omega: this.omega };
+  }
+
+  setState(state: Record<string, unknown>): void {
+    const n = typeof state.omega === 'number' ? state.omega : Number(state.omega);
+    if (Number.isFinite(n)) this.omega = n;
+  }
+
   stamp(mna: Mna, netOf: NetOf): void {
     if (this.thermal.dead) return;
 

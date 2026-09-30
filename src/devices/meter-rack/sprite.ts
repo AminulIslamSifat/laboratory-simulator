@@ -178,8 +178,12 @@ function spriteMINSSCOPY(){
   // LCD bezel + buttons on right
   s += _rr(612,120,93,92,'#e0e0d8','#111',1.3,3);
   s += _rr(620,128,77,58,'#5aa8de','#0a2530',1);
-  s += _lv(654,170,'d2',22);
-  s += _lu(692,180,'d2',12);
+  // This bay is a SCOPY box: DB9 connectors and ALARM jacks only, no
+  // measurement terminals on the model. It used to carry the 'd2' display
+  // node, which meant the DIN-1 voltmeter's reading was painted HERE in row 1
+  // while its DIN1+/- jacks sat down in the row-2 DIN bay. The meter looked
+  // disconnected from its own terminals. The d2 node now lives on the DIN
+  // bay's left meter, where those jacks actually are.
   return s;
 }
 
@@ -262,8 +266,11 @@ function spriteAAPower(){
   s += '<path d="M127,351 L127,346 M143,351 L143,346" stroke="#333" stroke-width="1.2"/>';
   s += '<path d="M127,385 L127,390 M143,385 L143,390" stroke="#333" stroke-width="1.2"/>';
   s += _rr(168,307,50,32,'#f4f4ee','#111',1);
-  s += _tt(193,320,'DC MULTIMETER',4.2,'700','#111');
-  s += _tt(193,331,'600V - 25A',4.2,'400','#333');
+  s += _tt(193,315,'DC MULTIMETER',4.2,'700','#111');
+  // The AA bay's own meter. 'd4' was painted on the DIN bay's right-hand
+  // meter, a bay away from the AA+/- jacks it reads.
+  s += _lv(193,327,'d4',13);
+  s += _lu(211,331,'d4',7);
   s += _jack(184,292,8);
   s += _cc(213,292,8,'#151515','#000',1.2)+_cc(213,292,3.5,'#000');
   s += _jack(184,358,8);
@@ -300,8 +307,12 @@ function spriteDINMeters(){
     }
     return t;
   }
-  s += meter(230, 'd3');
-  s += meter(316, 'd4');
+  // Left meter reads the DIN-1 pair (the TOP jack row), right meter reads
+  // DIN-2 (the BOTTOM row) - so the number sits under the jacks it belongs
+  // to. These were 'd3' and 'd4', which parked the DIN-1 voltage up in the
+  // MINS SCOPY bay and left this one showing the field channel instead.
+  s += meter(230, 'd2');
+  s += meter(316, 'd3');
   s += _jack(440,290,8);
   s += _cc(462,290,8,'#151515','#000',1.2)+_cc(462,290,3.5,'#000');
   s += _rr(425,305,52,32,'#f4f4ee','#111',1);

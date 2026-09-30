@@ -16,6 +16,8 @@ import {
   saveBenchToServer, listServerBenches, loadBenchFromServer, deleteServerBench,
   type ServerBench
 } from './bench-server.js';
+import { askRoll, getRoll, normRoll } from './roll.js';
+import { benchThumb } from './bench-thumb.js';
 
 /** Shorthand for getElementById, non-null because every id below is in the HTML. */
 function el(id: string): HTMLElement {
@@ -70,16 +72,59 @@ function mountLab(): void {
     meterList: el('meter-list'),
     statusEl: el('lab-status'),
     titleEl: el('lab-title'),
-    toast: toast
+    toast: toast,
+    onDirtyChange: syncSaveFab
   });
   lab.loadPresetList(PRESETS);
   lab.bindMeterPanel();
+  syncSaveFab(lab.dirty);
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Floating Save button
+   ──────────────────────────────────────────────────────────────── */
+
+/**
+ * Show or hide the floating Save button.
+ *
+ * The button exists so that an unsaved bench is impossible to miss. The kebab
+ * menu has always had Save, but a menu you have to open is not a reminder — a
+ * student who wired a bench and walked away had no signal that their work
+ * would be gone. This is that signal.
+ *
+ * The label carries the current name once a bench has been saved, so the same
+ * control doubles as "you are editing Exp 3".
+ */
+function syncSaveFab(dirty: boolean): void {
+  const fab = document.getElementById('lab-save-fab');
+  if (!fab) return;
+  fab.classList.toggle('show', dirty);
+  // Keep the label honest: a named bench being edited says so, an anonymous
+  // one just says Save.
+  const label = fab.querySelector('.fab-txt');
+  if (label) label.textContent = lastName ? 'Save \u00b7 ' + lastName : 'Save experiment';
+}
+
+/**
+ * Called after a successful save so the indicator clears.
+ *
+ * `markClean` is on the Lab because the flag lives there; the shell never
+ * touches `lab.dirty` directly, or the two would drift the first time the
+ * save path changed.
+ */
+function markSaved(): void {
+  if (lab) lab.markClean();
+  syncSaveFab(false);
 }
 
 function ensureLab(): Lab {
   if (!lab) mountLab();
   return lab as Lab;
 }
+
+// TEMP DEBUG: expose the live lab so the console can read the exact
+// simulator snapshot the sprite LCDs are painted from.
+(window as unknown as { __lab: () => Lab }).__lab = ensureLab;
 
 function runBoot(): void {
   let i = 0;
@@ -209,7 +254,14 @@ function showAbout(): void {
  */
 function captureBench(): BenchFile {
   const L = ensureLab();
-  const devices = L.devices.map((d) => ({ id: d.id, kind: d.kind, x: d.x, y: d.y, rot: d.rot || 0 }));
+  const devices = L.devices.map((d) => {
+    const m = d.model as { getState?: () => Record<string, unknown> };
+    const state = typeof m.getState === 'function' ? m.getState() : undefined;
+    return {
+      id: d.id, kind: d.kind, x: d.x, y: d.y, rot: d.rot || 0,
+      ...(state && Object.keys(state).length ? { state } : {})
+    };
+  });
   // Drop dangling wires before they reach disk.
   //
   // A wire can outlive its device: the undo stack snapshots the wires around
@@ -265,6 +317,12 @@ function restoreBench(data: BenchFile): void {
     // already has the terminals where the wires expect them.
     entry.rot = d.rot || 0;
     if (node) L.applyRotationPublic(node, entry);
+
+    // Restore the panel: isolator, rail switches, variac, wiper dials, rotor
+    // speed. Geometry alone is not the experiment - a bench that reloads with
+    // every switch off is a dead bench that looks broken.
+    const m = entry.model as { setState?: (s: Record<string, unknown>) => void };
+    if (d.state && typeof m.setState === 'function') m.setState(d.state);
   });
 
   (data.wires || []).forEach((w) => {
@@ -342,21 +400,45 @@ function esc(s: string): string {
   );
 }
 
-/** A listed bench plus the file it came from. */
-type DiskSlot = ServerBench;
-
 /** The last bench name used, so re-saving is one Enter key. */
 let lastName = '';
 
 /**
- * Save the live bench to `<project>/benches/` on the machine running the
- * dev server.
+ * Which experiments the hub is showing.
  *
- * The browser cannot write to disk, but the Vite server it is talking to can
- * and does — that is the whole point of this path. No download prompt, no
- * permission dialog. When the app is served by something WITHOUT the bench
- * API (a plain static host), this falls back to a download so the button
- * still does something useful.
+ * `mine` filters server-side to the remembered roll. `all` shows every
+ * student's, which is the point of a shared hub — a lab partner can find the
+ * bench you wired and load it without you exporting a file.
+ */
+let hubScope: 'mine' | 'all' = 'all';
+
+/** Cached listing, so search and sort re-render without refetching. */
+let hubCache: ServerBench[] = [];
+
+/** Where the server said it is storing benches, and which backend won. */
+let hubWhere = '';
+let hubBackend: 'mongo' | 'fs' = 'fs';
+
+/** Live search text and sort key, owned by the hub toolbar. */
+let hubQuery = '';
+let hubSort: 'recent' | 'name' | 'roll' = 'recent';
+
+/**
+ * Save the live bench under a roll number.
+ *
+ * ─── The roll prompt ───
+ *
+ * A save is keyed by `(roll, name)`. The roll is asked ONCE per browser and
+ * remembered, so the common case — iterate on a bench, re-save ten times —
+ * never sees a dialog after the first. Cancelling the prompt aborts the save
+ * rather than writing an unowned bench, because an unowned bench is one
+ * nobody can find again.
+ *
+ * ─── The fallback ───
+ *
+ * When the app is served by a plain static host there are no bench routes at
+ * all, so the save becomes a download. That path is unchanged and still the
+ * only one Firefox supports without the API.
  */
 async function saveNamed(): Promise<void> {
   const L = ensureLab();
@@ -371,10 +453,16 @@ async function saveNamed(): Promise<void> {
   const bench = captureBench();
 
   if (await apiAvailable()) {
+    const roll = await askRoll();
+    if (!roll) { toastMsg('Roll number required', 'warn'); return; }
+
     try {
-      const out = await saveBenchToServer(trimmed, bench);
+      const out = await saveBenchToServer(roll, trimmed, bench);
       lastName = trimmed;
-      toastMsg('Saved ' + out.file + ' \u2713', 'ok');
+      markSaved();
+      toastMsg('Saved \u201c' + out.name + '\u201d under ' + out.roll + ' \u2713', 'ok');
+      // Land the user on the hub so the save is visibly in the list, not just
+      // asserted by a toast that fades.
       void openBenchLibrary();
       return;
     } catch (err) {
@@ -387,38 +475,127 @@ async function saveNamed(): Promise<void> {
 
   downloadBench(trimmed, bench);
   lastName = trimmed;
+  markSaved();
   toastMsg('Saved \u201c' + trimmed + '.json\u201d to Downloads', 'ok');
 }
 
-/** Load a bench from the server onto the bench. */
-async function loadNamed(file: string): Promise<void> {
+/** Load a bench from the hub onto the bench. */
+async function loadNamed(roll: string, name: string): Promise<void> {
   try {
-    // The library lists FILE NAMES (`Meow-1.json`), but the bench API takes a
-    // NAME and appends `.json` itself (`toFileName`). Passing the file name
-    // straight through asked the server for `Meow-1.json.json`, which does
-    // not exist - so every load from the drawer failed with ENOENT even
-    // though the file was sitting right there. Strip the extension here; the
-    // server re-adds exactly one.
-    const bench = await loadBenchFromServer(file.replace(/\.json$/i, ''));
-    restoreBench(bench);
-    lastName = file.replace(/\.json$/i, '');
+    const bench = await loadBenchFromServer(roll, name);
+    // Suppress dirty-marking for the rebuild: the bench is, by definition,
+    // exactly what was just read back, so it is not an unsaved edit.
+    ensureLab().withoutDirty(() => restoreBench(bench));
+    lastName = name;
     closeDrawer();
-    toastMsg('Loaded \u201c' + file + '\u201d \u2713', 'ok');
+
+    // The hub is reachable from the MAIN MENU as well as from inside the lab,
+    // and it used to only toast. Loading from the menu therefore announced
+    // "Loaded" over a screen that was still showing the menu — the bench had
+    // been restored underneath it and the user had no way to tell. Switch to
+    // the lab so the thing they just loaded is the thing they are looking at.
+    showLab();
+
+    toastMsg('Loaded \u201c' + name + '\u201d \u2713', 'ok');
   } catch (err) {
     console.error(err);
     toastMsg('Could not load', 'err');
   }
 }
 
-/** Render the bench library (server folder contents) into the drawer. */
+/**
+ * Apply the toolbar's search and sort to the cached listing.
+ *
+ * Pure, so it can run on every keystroke without touching the network. The
+ * listing is fetched once per hub open and the toolbar re-renders from the
+ * cache.
+ */
+function filterHub(benches: ServerBench[]): ServerBench[] {
+  const q = hubQuery.trim().toLowerCase();
+  let out = benches;
+
+  if (hubScope === 'mine') {
+    const r = getRoll();
+    out = out.filter((b) => b.roll === r);
+  }
+
+  if (q) {
+    out = out.filter((b) =>
+      b.name.toLowerCase().includes(q) || b.roll.toLowerCase().includes(q)
+    );
+  }
+
+  const sorted = out.slice();
+  if (hubSort === 'name') {
+    sorted.sort((a, b) => a.name.localeCompare(b.name));
+  } else if (hubSort === 'roll') {
+    sorted.sort((a, b) => a.roll.localeCompare(b.roll) || b.savedAt - a.savedAt);
+  } else {
+    sorted.sort((a, b) => b.savedAt - a.savedAt);
+  }
+  return sorted;
+}
+
+/** Render just the list portion of the hub, from the cache. */
+function renderHubList(): void {
+  const host = document.getElementById('hub-list');
+  if (!host) return;
+
+  const rows = filterHub(hubCache);
+
+  if (!rows.length) {
+    host.innerHTML = '<p class="bl-empty">' +
+      (hubCache.length
+        ? 'Nothing matches that search.'
+        : 'No saved experiments yet.<br>Wire something up and hit <strong>Save experiment</strong>.') +
+      '</p>';
+    return;
+  }
+
+  let html = '<div class="bl-list">';
+  for (const s of rows) {
+    html += '<div class="bl-item" data-roll="' + esc(s.roll) + '" data-name="' + esc(s.name) + '">';
+    html += '<div class="bl-thumb">' + benchThumb(s.layout) + '</div>';
+    html += '<div class="bl-main">';
+    html += '<div class="bl-name">' + esc(s.name) + '</div>';
+    html += '<div class="bl-meta">' +
+            '<span class="bl-roll">' + esc(s.roll || 'legacy') + '</span> \u00b7 ' +
+            s.devices + ' device' + (s.devices === 1 ? '' : 's') + ' \u00b7 ' +
+            s.wires + ' wire' + (s.wires === 1 ? '' : 's') + ' \u00b7 ' + ago(s.savedAt) + '</div>';
+    html += '</div>';
+    html += '<div class="bl-tools">';
+    html += '<button class="bl-ico" data-act="load" title="Load"><i data-lucide="folder-open" class="lucide-icon xs"></i></button>';
+    html += '<button class="bl-ico danger" data-act="delete" title="Delete"><i data-lucide="trash-2" class="lucide-icon xs"></i></button>';
+    html += '</div></div>';
+  }
+  html += '</div>';
+  host.innerHTML = html;
+  refreshIcons();
+}
+
+/**
+ * The experiment hub.
+ *
+ * Every saved bench, from every student, in one drawer. Search and sort are
+ * client-side over a single listing — a lab's worth of benches is a few
+ * hundred rows, and a round trip per keystroke would be slower and no more
+ * correct.
+ */
 async function openBenchLibrary(): Promise<void> {
-  drawerTtl.textContent = 'Load Experiment';
+  drawerTtl.textContent = 'Experiments';
   drawer.classList.remove('hidden');
 
+  const me = getRoll();
   let html = '<div class="bl-actions">';
   html += '<button class="bl-btn primary" data-bl="save"><i data-lucide="save" class="lucide-icon xs"></i> Save experiment</button>';
   html += '<button class="bl-btn" data-bl="import"><i data-lucide="upload" class="lucide-icon xs"></i> Load from file</button>';
   html += '</div>';
+
+  html += '<div class="bl-identity">' +
+    (me
+      ? 'Saving as <strong>' + esc(me) + '</strong> <button class="bl-link" data-bl="roll">change</button>'
+      : 'No roll number set \u00b7 <button class="bl-link" data-bl="roll">set it now</button>') +
+    '</div>';
 
   if (!(await apiAvailable())) {
     html += '<p class="bl-empty">The bench server is not reachable, so saving falls back to a download.<br>' +
@@ -428,46 +605,61 @@ async function openBenchLibrary(): Promise<void> {
     return;
   }
 
-  let dir = '';
-  let slots: DiskSlot[] = [];
   try {
     const res = await listServerBenches();
-    dir = res.dir;
-    slots = res.benches;
+    hubCache = res.benches;
+    hubWhere = res.where;
+    hubBackend = res.backend;
   } catch (err) {
     console.error(err);
-    html += '<p class="bl-empty">Could not read the bench folder.</p>';
+    html += '<p class="bl-empty">Could not read the experiment store.</p>';
     drawerBody.innerHTML = html;
     refreshIcons();
     return;
   }
 
-  html += '<div class="bl-where">Saving to <strong>' + esc(dir) + '</strong></div>';
+  html += '<div class="bl-where">Stored in <strong>' + esc(hubWhere) + '</strong>' +
+          '<span class="bl-backend">' + (hubBackend === 'mongo' ? 'MongoDB' : 'files') + '</span></div>';
 
-  if (!slots.length) {
-    html += '<p class="bl-empty">No saved experiments yet.<br>Wire something up and hit <strong>Save experiment</strong>.</p>';
-  } else {
-    html += '<div class="bl-list">';
-    for (const s of slots) {
-      html += '<div class="bl-item" data-file="' + esc(s.file) + '">';
-      html += '<div class="bl-main">';
-      html += '<div class="bl-name">' + esc(s.name) + '</div>';
-      html += '<div class="bl-meta">' + s.devices + ' device' + (s.devices === 1 ? '' : 's') + ' \u00b7 ' +
-              s.wires + ' wire' + (s.wires === 1 ? '' : 's') + ' \u00b7 ' + ago(s.savedAt) + '</div>';
-      html += '</div>';
-      html += '<div class="bl-tools">';
-      html += '<button class="bl-ico" data-act="load" title="Load"><i data-lucide="folder-open" class="lucide-icon xs"></i></button>';
-      html += '<button class="bl-ico danger" data-act="delete" title="Delete"><i data-lucide="trash-2" class="lucide-icon xs"></i></button>';
-      html += '</div></div>';
-    }
-    html += '</div>';
-  }
+  // Toolbar: scope, search, sort. Rendered once; only #hub-list is redrawn
+  // as the user types, so the input keeps focus and the caret stays put.
+  html += '<div class="hub-tools">';
+  html += '<div class="hub-scope">';
+  html += '<button class="hub-scope-btn' + (hubScope === 'all' ? ' active' : '') + '" data-scope="all">All</button>';
+  html += '<button class="hub-scope-btn' + (hubScope === 'mine' ? ' active' : '') + '" data-scope="mine"' +
+          (me ? '' : ' disabled title="Set a roll number first"') + '>Mine</button>';
+  html += '</div>';
+  html += '<input class="hub-search" id="hub-search" type="search" placeholder="Search name or roll\u2026" value="' + esc(hubQuery) + '" />';
+  html += '<select class="hub-sort" id="hub-sort">';
+  html += '<option value="recent"' + (hubSort === 'recent' ? ' selected' : '') + '>Recent</option>';
+  html += '<option value="name"' + (hubSort === 'name' ? ' selected' : '') + '>Name</option>';
+  html += '<option value="roll"' + (hubSort === 'roll' ? ' selected' : '') + '>Roll</option>';
+  html += '</select>';
+  html += '</div>';
+
+  html += '<div id="hub-list"></div>';
 
   drawerBody.innerHTML = html;
-  refreshIcons();
+  renderHubList();
+
+  const search = document.getElementById('hub-search') as HTMLInputElement | null;
+  if (search) {
+    search.addEventListener('input', () => {
+      hubQuery = search.value;
+      renderHubList();
+    });
+  }
+
+  const sort = document.getElementById('hub-sort') as HTMLSelectElement | null;
+  if (sort) {
+    sort.addEventListener('change', () => {
+      hubSort = sort.value as typeof hubSort;
+      renderHubList();
+    });
+  }
 }
 
-/** Delegate clicks inside the library drawer. */
+/** Delegate clicks inside the hub drawer. */
 drawerBody.addEventListener('click', (e) => {
   const target = e.target as HTMLElement;
 
@@ -476,22 +668,43 @@ drawerBody.addEventListener('click', (e) => {
     const k = action.dataset.bl;
     if (k === 'save') void saveNamed();
     else if (k === 'import') importBench();
+    else if (k === 'roll') {
+      // Changing identity is a two-step: ask, then redraw the hub so the
+      // "Saving as" line and the Mine filter agree with the new value.
+      void (async () => {
+        const r = await askRoll('change');
+        if (r) { toastMsg('Roll set to ' + r, 'ok'); void openBenchLibrary(); }
+      })();
+    }
+    return;
+  }
+
+  // Scope buttons live outside the list, so they must be handled before the
+  // row lookup — otherwise a click on "Mine" would fall through to nothing.
+  const scope = target.closest('[data-scope]') as HTMLElement | null;
+  if (scope) {
+    if (scope.hasAttribute('disabled')) return;
+    hubScope = (scope.dataset.scope as 'mine' | 'all') || 'all';
+    document.querySelectorAll('.hub-scope-btn').forEach((b) => b.classList.remove('active'));
+    scope.classList.add('active');
+    renderHubList();
     return;
   }
 
   const item = target.closest('.bl-item') as HTMLElement | null;
   if (!item) return;
-  const file = item.dataset.file as string;
+  const roll = item.dataset.roll as string;
+  const name = item.dataset.name as string;
 
   const tool = target.closest('[data-act]') as HTMLElement | null;
   if (tool) {
     const act = tool.dataset.act;
-    if (act === 'load') void loadNamed(file);
+    if (act === 'load') void loadNamed(roll, name);
     else if (act === 'delete') {
-      if (window.confirm('Delete ' + file + '?')) {
+      if (window.confirm('Delete \u201c' + name + '\u201d' + (roll ? ' (' + roll + ')' : '') + '?')) {
         void (async () => {
           try {
-            await deleteServerBench(file);
+            await deleteServerBench(roll, name);
             void openBenchLibrary();
             toastMsg('Deleted', 'ok');
           } catch (err) {
@@ -504,7 +717,7 @@ drawerBody.addEventListener('click', (e) => {
     return;
   }
 
-  void loadNamed(file);
+  void loadNamed(roll, name);
 });
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -534,6 +747,11 @@ el('go-presets').addEventListener('click', () => {
   L._renderMeters();
 });
 el('go-reference').addEventListener('click', renderRefList);
+el('go-hub').addEventListener('click', () => { void openBenchLibrary(); });
+
+// The floating Save button. Same path as the kebab entry, so there is one
+// save implementation and no way for the two to disagree.
+el('lab-save-fab').addEventListener('click', () => { void saveNamed(); });
 
 el('lab-back').addEventListener('click', showMenu);
 el('lab-run').addEventListener('click', () => {
@@ -557,8 +775,8 @@ el('kebab').addEventListener('click', (e) => {
   const k = btn.dataset.k;
   if (k === 'reference') renderRefList();
   else if (k === 'presets') { showLab(); }
-  else if (k === 'save') { showLab(); saveNamed(); }
-  else if (k === 'load') { showLab(); openBenchLibrary(); }
+  else if (k === 'save') { showLab(); void saveNamed(); }
+  else if (k === 'load') { showLab(); void openBenchLibrary(); }
   else if (k === 'about') showAbout();
 });
 

@@ -1,29 +1,53 @@
 /**
  * Client for the bench save/load API served by the Vite dev server.
  *
- * The server owns the disk. This module only talks to it over HTTP, so the
- * app works the same whether it is served by `vite dev`, `vite preview`, or
- * anything else that mounts the bench-api plugin.
+ * The server owns the storage. This module only talks to it over HTTP, so the
+ * app works the same whether the backend is MongoDB or a folder of JSON — the
+ * client never knows which, and the hub reports it only so the user can tell
+ * where their work went.
  *
- * A bench is written to `<project>/benches/<name>.json` by the server, with
- * no download prompt and no browser permission dialog.
+ * ─── Rolls ───
+ * Every call carries a roll number. That is the ownership key: a save is
+ * `(roll, name)`, and two students may both have a bench called `Exp 3`.
+ * The roll is stored in localStorage by the caller (`roll.ts`) so the user is
+ * asked once per browser, not once per save.
  */
 
 import type { BenchFile } from './bench-store.js';
 
-/** One entry in the server's bench listing. */
+/** One device position in a listing, for drawing a thumbnail. */
+export interface BenchLayoutItem {
+  k: string;
+  x: number;
+  y: number;
+  r: number;
+}
+
+/** One entry in the hub. Mirrors the server's `BenchMeta`. */
 export interface ServerBench {
+  roll: string;
   name: string;
-  file: string;
   savedAt: number;
+  createdAt: number;
   devices: number;
   wires: number;
+  layout: BenchLayoutItem[];
 }
 
 /** Result of a save, for the toast. */
 export interface SaveResult {
-  file: string;
-  dir: string;
+  roll: string;
+  name: string;
+  savedAt: number;
+  where: string;
+  backend: 'mongo' | 'fs';
+}
+
+/** Result of a listing, including where the data actually lives. */
+export interface ListResult {
+  where: string;
+  backend: 'mongo' | 'fs';
+  benches: ServerBench[];
 }
 
 interface ApiError { ok: false; error: string }
@@ -68,29 +92,41 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   return json as T;
 }
 
-/** Write a bench to the server's folder. */
-export async function saveBenchToServer(name: string, bench: BenchFile): Promise<SaveResult> {
-  const out = await post<{ ok: true; file: string; dir: string }>('/api/bench/save', { name, bench });
-  return { file: out.file, dir: out.dir };
+/** Write a bench under a roll number. */
+export async function saveBenchToServer(roll: string, name: string, bench: BenchFile): Promise<SaveResult> {
+  const out = await post<SaveResult & { ok: true }>('/api/bench/save', { roll, name, bench });
+  return {
+    roll: out.roll, name: out.name, savedAt: out.savedAt,
+    where: out.where, backend: out.backend
+  };
 }
 
-/** List every saved bench. */
-export async function listServerBenches(): Promise<{ dir: string; benches: ServerBench[] }> {
-  const res = await fetch('/api/bench/list');
+/** List saved benches. With a roll, only that student's. */
+export async function listServerBenches(roll?: string): Promise<ListResult> {
+  const url = roll ? '/api/bench/list?roll=' + encodeURIComponent(roll) : '/api/bench/list';
+  const res = await fetch(url);
   if (!res.ok) throw new Error('list failed: HTTP ' + res.status);
-  const json = (await res.json()) as { ok: true; dir: string; benches: ServerBench[] };
-  return { dir: json.dir, benches: json.benches };
+  const json = (await res.json()) as ListResult & { ok: true };
+  return { where: json.where, backend: json.backend, benches: json.benches };
 }
 
 /** Read one bench back. */
-export async function loadBenchFromServer(file: string): Promise<BenchFile> {
-  const res = await fetch('/api/bench/load?name=' + encodeURIComponent(file));
+export async function loadBenchFromServer(roll: string, name: string): Promise<BenchFile> {
+  const url = '/api/bench/load?roll=' + encodeURIComponent(roll) + '&name=' + encodeURIComponent(name);
+  const res = await fetch(url);
   if (!res.ok) throw new Error('load failed: HTTP ' + res.status);
   const json = (await res.json()) as { ok: true; bench: BenchFile };
   return json.bench;
 }
 
 /** Delete one bench. */
-export async function deleteServerBench(file: string): Promise<void> {
-  await post('/api/bench/delete', { name: file });
+export async function deleteServerBench(roll: string, name: string): Promise<void> {
+  await post('/api/bench/delete', { roll, name });
 }
+
+// NOTE: there is deliberately no `listRolls()` wrapper here. The hub needs
+// distinct owners, and it already has the full listing, so deriving them
+// client-side costs nothing and saves a request. The server keeps
+// GET /api/bench/rolls for anything else that wants the list without pulling
+// every bench row — but nothing in the app calls it, so a wrapper would be
+// dead code that the bundler tree-shakes away while still looking live.

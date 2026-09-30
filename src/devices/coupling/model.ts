@@ -65,6 +65,16 @@ export class Coupling implements Machine {
     this.Tmax = opts.Tmax ?? 40;
   }
 
+  /** Shared shaft speed, so a coupled pair reloads already spinning. */
+  getState(): Record<string, unknown> {
+    return { omega: this.omega };
+  }
+
+  setState(state: Record<string, unknown>): void {
+    const n = typeof state.omega === 'number' ? state.omega : Number(state.omega);
+    if (Number.isFinite(n)) this.omega = n;
+  }
+
   update(dt: number, _sol: Solution): void {
     // The velocity equalisation runs in the solver's mechanical pass, not
     // here, because it needs both coupled machines in hand. This only decays

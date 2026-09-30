@@ -1,15 +1,21 @@
 # Render blueprint for the EEE-2152 bench simulator.
 #
 # This is a `web` service, NOT a static site. The bench-api Vite plugin mounts
-# /api/bench/* on the preview server, so Save writes real files on the host —
-# no browser API, no download fallback. A static site has no process running
-# and therefore nothing that can write, which is the whole distinction.
+# /api/bench/* on the preview server, so Save reaches a real backend — no
+# browser API, no download fallback. A static site has no process running and
+# therefore nothing that can write, which is the whole distinction.
 services:
   - type: web
     name: eee-sim
     runtime: node
-    # Persistent disks are a paid feature. On the free plan `benches/` lives on
-    # the container filesystem and is wiped on every deploy or restart.
+    # With MongoDB configured, `benches/` on disk is only the FALLBACK store.
+    # The paid disk is therefore no longer load-bearing: if MONGODB_URI is set
+    # and reachable, experiments live in Atlas and survive a redeploy on any
+    # plan. The disk is kept so that a missing or unreachable URI degrades to
+    # the old behaviour instead of failing, and because the free plan wipes
+    # the container filesystem on every restart.
+    #
+    # If you are certain the URI will always be set, `plan: free` is now safe.
     plan: starter
     buildCommand: npm ci && npm run build
     startCommand: npm run preview
@@ -17,10 +23,17 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20"
+      # Set this in the Render dashboard, NOT here. The URI carries the
+      # database password, and this file is committed. `sync: false` tells
+      # Render to prompt for the value and keep it out of the blueprint.
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: eee_sim
     disk:
       name: benches
       # Must sit under the service working directory (/opt/render/project/src)
-      # because BENCH_DIR is resolved relative to process.cwd(). Anything
-      # written outside this path is lost on the next deploy.
+      # because the FS store resolves the folder relative to process.cwd().
+      # Anything written outside this path is lost on the next deploy.
       mountPath: /opt/render/project/src/benches
       sizeGB: 1

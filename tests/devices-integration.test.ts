@@ -193,6 +193,10 @@ describe('DC machine', () => {
     const nl = new Netlist();
     const psu = new DCSupply({ id: 'psu' });
     const m = new DCMachine({ id: 'm', Ra: 2.5, Ke: 0.95 });
+    // Separately excited: the field is fed from its own 24 V tap, so the
+    // internal shunt link (F2≡A2) must be off or the field and armature
+    // circuits merge.
+    m.setShuntField(false);
     nl.addDevice(psu);
     nl.addDevice(m);
 
@@ -235,6 +239,8 @@ describe('DC machine', () => {
     const nl = new Netlist();
     const psu = new DCSupply({ id: 'psu' });
     const m = new DCMachine({ id: 'm', Ra: 2.5, Ke: 0.95 });
+    // Separately excited: field on its own 24 V tap, shunt link off.
+    m.setShuntField(false);
     // Series starter resistance — the whole point of the starter box.
     //
     // 40 ohm, not 20. The 50 V rail is a 2 A output, so the total armature
@@ -282,6 +288,8 @@ describe('DC machine', () => {
     const nl = new Netlist();
     const psu = new DCSupply({ id: 'psu' });
     const m = new DCMachine({ id: 'm', primeRpm: 3000 });
+    // Field only, fed externally - shunt link must be off.
+    m.setShuntField(false);
     nl.addDevice(psu);
     nl.addDevice(m);
     // Field only - armature open, so E is measurable as terminal volts.

@@ -60,6 +60,56 @@ export class DCMachine implements Machine {
   // heard of, the netlist dropped the wire silently, and the bench sat dead.
   readonly terminals = terminalsOf(dcMachine.layout);
 
+  /**
+   * Shunt link state - see `setShuntField()`.
+   */
+  private _shunt = true;
+
+  /**
+   * Terminal pairs the netlist must bond.
+   *
+   * The field winding lives between F1 and F2 — they ARE its two ends, and
+   * nothing else. The machine declares NO internal bonds.
+   *
+   * This is the whole point of bringing F1/F2 out to the panel: the student
+   * wires the field circuit on the bench exactly as the lab manual says —
+   * A1 to F1, then F2 out through the field rheostat and the field ammeter
+   * and back to A2. The winding is ONE element of that loop, in SERIES with
+   * the rheostat and the ammeter, which is the only way a field ammeter can
+   * read field current.
+   *
+   * Earlier revisions added internal A1≡F1 and F2≡A2 bonds, on the theory
+   * that a shunt machine has its field pre-wired across the armature. That is
+   * true of a machine with no exposed field terminals, but this machine HAS
+   * them. The bonds put the 2500 ohm winding straight across the armature in
+   * PARALLEL with whatever the student wired between F1 and F2, so the
+   * external rheostat saw a fraction of the terminal voltage, the winding
+   * drew its own current independent of the rheostat, and the ammeter read a
+   * branch current instead of the field current. Three different numbers for
+   * what is one series loop.
+   *
+   * `setShuntField()` is kept as a no-op alias so existing benches and tests
+   * that called it keep compiling; the field is always the plain F1-F2
+   * winding now.
+   */
+  bonds: Array<[string, string]> = [['A1', 'F1'], ['F2', 'A2']];
+
+  /**
+   * Toggle the internal shunt connection. On (the default) ties F1 to A1
+   * and F2 to A2, so the field circuit is fed from the armature with no
+   * external A1→F1 wire needed — which is how this machine is presented on
+   * the panel. Off leaves F1/F2 as a floating winding for separate
+   * excitation.
+   */
+  setShuntField(on: boolean): void {
+    this._shunt = on;
+    this.bonds = on ? [['A1', 'F1'], ['F2', 'A2']] : [];
+  }
+
+  get shuntField(): boolean {
+    return this._shunt;
+  }
+
   Ra: number;
 
   /**
@@ -116,6 +166,22 @@ export class DCMachine implements Machine {
     this.primeRpm = opts.primeRpm ?? 0;
   }
 
+  /** Rotor speed and field flux, so a reloaded bench resumes where it was. */
+  getState(): Record<string, unknown> {
+    return { omega: this.omega, phi: this.phi };
+  }
+
+  setState(state: Record<string, unknown>): void {
+    const num = (v: unknown): number | null => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const w = num(state.omega);
+    const f = num(state.phi);
+    if (w !== null) this.omega = w;
+    if (f !== null) this.phi = f;
+  }
+
   stamp(mna: Mna, netOf: NetOf): void {
     if (this.thermal.dead) return;
 
@@ -128,6 +194,13 @@ export class DCMachine implements Machine {
       stampNorton(mna, A1, A2, 1 / (this.Ra + 0.1), E);
     }
 
+    // The field winding ALWAYS lives between F1 and F2. When the shunt bonds
+    // are active the netlist has already merged A1≡F1 and F2≡A2, so stamping
+    // F1-F2 is electrically the same as stamping across the armature - but it
+    // keeps the winding's own terminals meaningful, which is what makes the
+    // external rheostat and ammeter land in SERIES with the field instead of
+    // in parallel with it. When the bonds are off, F1-F2 is the floating
+    // separately-excited winding.
     stampConductance(mna, netOf(this.id, 'F1'), netOf(this.id, 'F2'), 1 / this.Rf);
     stampConductance(mna, netOf(this.id, 'D1'), netOf(this.id, 'D3'), 1 / this.Rs);
   }
@@ -143,6 +216,12 @@ export class DCMachine implements Machine {
 
     this.vA1 = netVoltage(sol, this.id, 'A1');
     this.vA2 = netVoltage(sol, this.id, 'A2');
+    // Field current is always the drop across the winding's own terminals.
+    // With the shunt bonds on, A1≡F1 so this is the full armature voltage
+    // across Rf (as it should be); with them off it is the external field
+    // supply. Reading A1-F1 when bonded used to return 0 V — the two nets
+    // were the same node — so If always came out 0 and the machine never
+    // built flux.
     this.If = netDiff(sol, this.id, 'F1', 'F2') / this.Rf;
     this.Is = netDiff(sol, this.id, 'D1', 'D3') / this.Rs;
 

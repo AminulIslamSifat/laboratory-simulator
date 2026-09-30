@@ -433,6 +433,10 @@ export class Simulator {
       // motor with 0.29 N m of developed torque never turned a wheel. The
       // coupling was not a shaft, it was a brake.
       let target: number;
+      let atRest = false;
+      // True when neither side is a prime mover: the pair is a free shaft and
+      // the branch below has already integrated net torque into `target`.
+      let rigid = false;
       if (A.primeRpm > 0 && B.primeRpm > 0) {
         target = (A.omega * Ja + B.omega * Jb) / (Ja + Jb);
       } else if (A.primeRpm > 0) {
@@ -440,12 +444,20 @@ export class Simulator {
       } else if (B.primeRpm > 0) {
         target = B.omega;
       } else {
-        // No prime mover. The pair must still ACCELERATE under whatever net
-        // torque each side develops. Integrate the combined inertia forward
-        // by the net torque, then lock both sides to the result.
+        // No prime mover. The pair must ACCELERATE under whatever net torque
+        // each side develops, and coast to rest once nothing drives it.
         //
-        // `driveTorque` is each machine's own developed torque, read from its
-        // public Te if it exposes one. A machine with no Te contributes none.
+        // Drive torque and bearing loss are integrated into the SHARED speed
+        // here, and `target` is that speed - they are deliberately NOT folded
+        // into the value the relaxation below interpolates toward. That
+        // relaxation only moves omega a fraction k ~= dt/0.15 of the way each
+        // frame, so any torque carried inside `target` gets throttled by k.
+        // With friction in there, a shaft that should stop in seconds was
+        // still turning after 300 s; with the motor's own torque in there the
+        // set never got past 298 rpm of its 3000 rpm synchronous speed.
+        // Integrating net torque straight into the state - exactly how a
+        // machine integrates its own omega when it is uncoupled - keeps the
+        // coupling a rigid shaft instead of a low-pass filter on torque.
         const drive = (x: Machine): number => {
           const t = (x as unknown as { Te?: number }).Te;
           return typeof t === 'number' && Number.isFinite(t) ? t : 0;
@@ -454,12 +466,31 @@ export class Simulator {
           const t = (x as unknown as { Tprime?: number }).Tprime;
           return typeof t === 'number' && Number.isFinite(t) ? t : 0;
         };
+        // Bearing + windage, N m, on each machine's own shaft. Larger than
+        // the per-machine value an uncoupled machine applies in its own
+        // update(): that term only has to stop a single light rotor, this one
+        // has to bring a whole motor-generator set down in a few seconds.
+        const FRICTION_STATIC = 0.08;
+        const FRICTION_VISCOUS = 0.01;
+        const friction = (x: Machine): number => {
+          const w = x.omega;
+          if (!Number.isFinite(w) || Math.abs(w) < 1e-6) return 0;
+          return FRICTION_STATIC * Math.sign(w) + FRICTION_VISCOUS * w;
+        };
         const J = Ja + Jb;
-        const netT = drive(A) + drive(B) + load(A) + load(B);
-        const shared = (A.omega * Ja + B.omega * Jb) / J;
-        target = shared + (netT / J) * dt;
-        if (!Number.isFinite(target)) target = shared;
-        if (target < 0) target = 0;
+        const driveT = drive(A) + drive(B) + load(A) + load(B);
+        const netT = driveT - friction(A) - friction(B);
+        let shared = (A.omega * Ja + B.omega * Jb) / J;
+        shared += (netT / J) * dt;
+        // Nothing pushing and the shaft already crawling: park it. Without
+        // this the static friction term alone would drive the speed negative
+        // and the set would creep backwards for the rest of the session.
+        atRest = Math.abs(driveT) < 1e-9 && Math.abs(shared) < 0.05;
+        if (atRest) shared = 0;
+        if (!Number.isFinite(shared)) shared = 0;
+        if (shared < 0) shared = 0;
+        target = shared;
+        rigid = true;
       }
 
       // Coupling loss torque is proportional to the speed mismatch.
@@ -470,10 +501,25 @@ export class Simulator {
 
       // A slipped coupling only pulls partway.
       const pull = coupling.slipped ? 0.15 : 1.0;
-      const k = Math.min(1, dt / 0.15) * pull;
+      // A free shaft is RIGID: `target` is already the correctly integrated
+      // shared speed, so land on it outright. Relaxing toward it would scale
+      // every torque by k (~0.028 at 240 Hz) and the set would crawl - which
+      // is exactly what it did, reaching 300 rpm instead of its rated speed.
+      // The relaxation is only for the prime-mover branches, where `target`
+      // is another machine's speed and a tug-of-war must be smoothed.
+      const k = rigid ? 1 : Math.min(1, dt / 0.15) * pull;
 
       A.omega += (target - A.omega) * k;
       B.omega += (target - B.omega) * k;
+
+      // Nothing driving and the shaft is down to a crawl: park it. Static
+      // friction alone would otherwise push the speed negative and the pair
+      // would creep backwards for the rest of the session.
+      if (atRest) {
+        A.omega = 0;
+        B.omega = 0;
+      }
+
       if (!Number.isFinite(A.omega)) A.omega = 0;
       if (!Number.isFinite(B.omega)) B.omega = 0;
       if (A.omega < 0) A.omega = 0;

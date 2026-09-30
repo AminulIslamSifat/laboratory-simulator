@@ -1,0 +1,157 @@
+{
+  "devices": [
+    {
+      "id": "power_supply_1_2xww",
+      "kind": "power_supply",
+      "x": 101.03192085169374,
+      "y": 227.94089405150737,
+      "rot": 0
+    },
+    {
+      "id": "async_motor_3p_2_pc5k",
+      "kind": "async_motor_3p",
+      "x": 556.254451468586,
+      "y": 132.74018548001052,
+      "rot": 270
+    },
+    {
+      "id": "coupling_3_g9x2",
+      "kind": "coupling",
+      "x": 1040,
+      "y": 240,
+      "rot": 0
+    },
+    {
+      "id": "dc_machine_4_oan0",
+      "kind": "dc_machine",
+      "x": 1281.9526750412601,
+      "y": 200.98820300687078,
+      "rot": 180
+    },
+    {
+      "id": "rheostat_5_hjvd",
+      "kind": "rheostat",
+      "x": 1099.545933980693,
+      "y": 957.5232566291082,
+      "rot": 0
+    },
+    {
+      "id": "rheostat_6_34rl",
+      "kind": "rheostat",
+      "x": 1677.5853717524544,
+      "y": 608.9726487621313,
+      "rot": 0
+    },
+    {
+      "id": "meter_rack_7_xxyk",
+      "kind": "meter_rack",
+      "x": 977.3200357810117,
+      "y": 492.2813641623828,
+      "rot": 0
+    }
+  ],
+  "wires": [
+    {
+      "aDev": "async_motor_3p_2_pc5k",
+      "aTerm": "SHAFT",
+      "bDev": "coupling_3_g9x2",
+      "bTerm": "MA"
+    },
+    {
+      "aDev": "coupling_3_g9x2",
+      "aTerm": "MB",
+      "bDev": "dc_machine_4_oan0",
+      "bTerm": "SHAFT"
+    },
+    {
+      "aDev": "rheostat_5_hjvd",
+      "aTerm": "A_BOT",
+      "bDev": "rheostat_5_hjvd",
+      "bTerm": "B_TOP"
+    },
+    {
+      "aDev": "async_motor_3p_2_pc5k",
+      "aTerm": "V2",
+      "bDev": "async_motor_3p_2_pc5k",
+      "bTerm": "U2"
+    },
+    {
+      "aDev": "async_motor_3p_2_pc5k",
+      "aTerm": "U2",
+      "bDev": "async_motor_3p_2_pc5k",
+      "bTerm": "W2"
+    },
+    {
+      "aDev": "power_supply_1_2xww",
+      "aTerm": "3P-L2",
+      "bDev": "async_motor_3p_2_pc5k",
+      "bTerm": "U1"
+    },
+    {
+      "aDev": "async_motor_3p_2_pc5k",
+      "aTerm": "V1",
+      "bDev": "power_supply_1_2xww",
+      "bTerm": "3P-L3"
+    },
+    {
+      "aDev": "power_supply_1_2xww",
+      "aTerm": "3P-L1",
+      "bDev": "async_motor_3p_2_pc5k",
+      "bTerm": "W1"
+    },
+    {
+      "aDev": "dc_machine_4_oan0",
+      "aTerm": "F2",
+      "bDev": "rheostat_6_34rl",
+      "bTerm": "A_BOT"
+    },
+    {
+      "aDev": "rheostat_6_34rl",
+      "aTerm": "A_TOP",
+      "bDev": "meter_rack_7_xxyk",
+      "bTerm": "DIN2+"
+    },
+    {
+      "aDev": "dc_machine_4_oan0",
+      "aTerm": "F1",
+      "bDev": "meter_rack_7_xxyk",
+      "bTerm": "DIN2-"
+    },
+    {
+      "aDev": "meter_rack_7_xxyk",
+      "aTerm": "DIN1-",
+      "bDev": "dc_machine_4_oan0",
+      "bTerm": "A2"
+    },
+    {
+      "aDev": "dc_machine_4_oan0",
+      "aTerm": "A1",
+      "bDev": "meter_rack_7_xxyk",
+      "bTerm": "DIN1+"
+    },
+    {
+      "aDev": "dc_machine_4_oan0",
+      "aTerm": "A1",
+      "bDev": "meter_rack_7_xxyk",
+      "bTerm": "AA+"
+    },
+    {
+      "aDev": "dc_machine_4_oan0",
+      "aTerm": "A2",
+      "bDev": "meter_rack_7_xxyk",
+      "bTerm": "AA-"
+    },
+    {
+      "aDev": "meter_rack_7_xxyk",
+      "aTerm": "AA+2",
+      "bDev": "rheostat_5_hjvd",
+      "bTerm": "A_TOP"
+    },
+    {
+      "aDev": "rheostat_5_hjvd",
+      "aTerm": "B_RED",
+      "bDev": "meter_rack_7_xxyk",
+      "bTerm": "AA-2"
+    }
+  ]
+}

@@ -77,6 +77,22 @@ export class Rheostat implements Device {
     else if (id === 'posB') this.posB = v;
   }
 
+  /** Wiper positions, so a saved bench reloads with the dials where they were. */
+  getState(): Record<string, unknown> {
+    return { posA: this.posA, posB: this.posB };
+  }
+
+  setState(state: Record<string, unknown>): void {
+    const num = (v: unknown): number | null => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : null;
+    };
+    const a = num(state.posA);
+    const b = num(state.posB);
+    if (a !== null) this.posA = a;
+    if (b !== null) this.posB = b;
+  }
+
   stamp(mna: Mna, netOf: NetOf): void {
     // Two independent elements. A_BOT and B_RED are the base terminals;
     // B_YEL carries no element (spare post on the green unit).

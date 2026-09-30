@@ -48,6 +48,10 @@
       <span class='mc-ico'><i data-lucide='clipboard-list' class='lucide-icon'></i></span>
       <span class='mc-txt'><strong>Load an Experiment</strong><small>Pre-wired setups · exp 1–6</small></span>
     </button>
+    <button class='menu-card' id='go-hub'>
+      <span class='mc-ico'><i data-lucide='layout-grid' class='lucide-icon'></i></span>
+      <span class='mc-txt'><strong>Experiment Hub</strong><small>Every saved bench · search by roll</small></span>
+    </button>
     <button class='menu-card' id='go-reference'>
       <span class='mc-ico'><i data-lucide='book-open' class='lucide-icon'></i></span>
       <span class='mc-txt'><strong>Reference Material</strong><small>Nameplates · procedures · theory</small></span>
@@ -69,6 +73,15 @@
       <button class='lab-btn run' id='lab-run'><i data-lucide='play' class='lucide-icon xs'></i> Run</button>
       <button class='lab-btn clear' id='lab-clear'><i data-lucide='rotate-ccw' class='lucide-icon xs'></i> Clear</button>
     </div>
+    <!--
+      Floating Save. Hidden until the bench has unsaved changes, then slides
+      in. This is the whole point: an open kebab menu is not a reminder, but a
+      button that appears the moment you touch the bench is.
+    -->
+    <button class='lab-save-fab' id='lab-save-fab' title='Save this experiment'>
+      <i data-lucide='save' class='lucide-icon xs'></i>
+      <span class='fab-txt'>Save experiment</span>
+    </button>
     <button class='kebab-btn' id='lab-kebab' title='Menu'><i data-lucide='more-vertical' class='lucide-icon sm'></i></button>
   </header>
 
@@ -119,7 +132,7 @@
     <button data-k='reference'><i data-lucide='book-open' class='lucide-icon xs'></i> Reference Material</button>
     <button data-k='presets'><i data-lucide='clipboard-list' class='lucide-icon xs'></i> Experiment Presets</button>
     <button data-k='save'><i data-lucide='save' class='lucide-icon xs'></i> Save Experiment</button>
-    <button data-k='load'><i data-lucide='folder-open' class='lucide-icon xs'></i> Load Experiment</button>
+    <button data-k='load'><i data-lucide='layout-grid' class='lucide-icon xs'></i> Experiment Hub</button>
     <div class='kebab-sep'></div>
     <button data-k='about'><i data-lucide='info' class='lucide-icon xs'></i> About</button>
   </div>

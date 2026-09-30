@@ -41,6 +41,16 @@ export class LoadBank implements Device {
     return this.step === 0 ? Infinity : (this.Rsteps[this.step - 1] ?? Infinity);
   }
 
+  /** Selected step, so a saved bench reloads on the same load setting. */
+  getState(): Record<string, unknown> {
+    return { step: this.step };
+  }
+
+  setState(state: Record<string, unknown>): void {
+    const n = typeof state.step === 'number' ? state.step : Number(state.step);
+    if (Number.isFinite(n) && n >= 0 && n <= this.Rsteps.length) this.step = Math.floor(n);
+  }
+
   stamp(mna: Mna, netOf: NetOf): void {
     if (this.step === 0) return;
     stampConductance(mna, netOf(this.id, 'A'), netOf(this.id, 'B'), 1 / this.R);

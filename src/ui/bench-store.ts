@@ -19,6 +19,14 @@ export interface StoredDevice {
   x: number;
   y: number;
   rot?: number;
+  /**
+   * Panel state: switch positions, dial settings, rotor speed.
+   *
+   * Optional because benches saved before this existed have no state, and a
+   * bench with no state must still load - it just comes up at the device
+   * defaults, exactly as it used to.
+   */
+  state?: Record<string, unknown>;
 }
 
 /** One wire as stored. Terminal names are the sprite's printed jacks. */
