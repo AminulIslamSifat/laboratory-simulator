@@ -436,6 +436,25 @@ export class Lab {
 
     surf.addEventListener('pointerdown', (e: PointerEvent) => {
       if ((e.target as HTMLElement).closest('.device')) return;  // device drag handles itself
+
+      /* A wire is a CLICK target, not a drag handle - and it must never be
+       * captured.
+       *
+       * setPointerCapture() retargets every subsequent event for that pointer
+       * to the capturing element, and the spec is explicit that this includes
+       * the compatibility `click`: it is still dispatched to the capture
+       * target even after capture is released on pointerup. Capturing here
+       * therefore rewrote the target of the click that follows from `.wirehit`
+       * to the surface itself, the wireLayer's delegated handler never matched
+       * `.wirehit`, and every wire became undeletable. The hover highlight
+       * kept working, because that rides `mouseover`, which capture does not
+       * retarget - which is exactly what made this look like a wiring bug.
+       *
+       * Deleting a wire is a discrete click with no drag to track, so it needs
+       * no capture: bail before the gesture bookkeeping and the browser fires
+       * an ordinary click at the path, where the wireLayer handler is waiting. */
+      if ((e.target as HTMLElement).closest('.wirehit')) return;
+
       if (e.button === 2) return;                                // context menu
       if (e.pointerType === 'mouse' && e.button !== 0) return;
 
