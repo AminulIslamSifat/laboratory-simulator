@@ -254,29 +254,59 @@ function spriteOutletBay(){
   return s;
 }
 
+/**
+ * One meter face - 80 ref units wide, drawn at x0.
+ *
+ * Every face on this row is paired with its OWN block of four jacks sitting
+ * directly to its right: two on the top row and two below. Reading left to
+ * right, and top to bottom within a block, the pairs are
+ *
+ *   top    -> the original terminals
+ *   bottom -> the same line taken through the meter's ammeter
+ *
+ * so the number you are changing is always beside the jacks you are moving.
+ * Both bays on this row use this face; they differ only in jack names.
+ */
+function meterFace(x0: any, disp: any) {
+  var t = '';
+  t += _rr(x0,288,80,80,'#9a9a94','#333',1.2);
+  t += _rr(x0+5,294,70,16,'#5a5a56','#222',0.8);
+  t += _tt(x0+22,306,'ENTER',3.2,'400','#ddd');
+  t += _tt(x0+56,306,'CLEAR',3.2,'400','#ddd');
+  t += _rr(x0+5,314,70,46,'#3a3a38','#111',1);
+  t += _rr(x0+9,318,62,38,'#5aa8de','#0a2530',1);
+  t += _lv(x0+38,346,disp,15);
+  t += _lu(x0+57,352,disp,8);
+  t += _rr(x0+5,372,70,22,'#3a3a38','#111',0.9,2);
+  for (var i = 0; i < 3; i++) {
+    t += _rr(x0+8+i*22,375,18,14,'#5a5a56','#222',0.8,2);
+  }
+  return t;
+}
+
+/** Four jacks in a 2x2 block at (xL, xR) / (yT, yB), plus their +/- marks. */
+function meterJacks(xL: any, xR: any, yT: any, yB: any, size: any) {
+  var s = '';
+  s += _jack(xL,yT,8);
+  s += _cc(xR,yT,8,'#151515','#000',1.2)+_cc(xR,yT,3.5,'#000');
+  s += _jack(xL,yB,8);
+  s += _cc(xR,yB,8,'#151515','#000',1.2)+_cc(xR,yB,3.5,'#000');
+  s += _tt(xL,yT-9,'+',size,'700','#333')+_tt(xR,yT-9,'-',size,'700','#333');
+  s += _tt(xL,yB+12,'-',size,'700','#333')+_tt(xR,yB+12,'-',size,'700','#333');
+  return s;
+}
+
 function spriteAAPower(){
   // ref bay x68..223 y264..398
   var s = '';
   s += _rr(68,264,155,134,'#ecece4','#333',1);
   s += _screw(78,274)+_screw(213,274)+_screw(78,388)+_screw(213,388);
-  s += _tt(135,320,'AA POWER SUPPLY',5.5,'700','#333');
-  s += _rr(105,340,60,56,'#f4f4ee','#111',1.4,2);
-  s += _cc(135,368,22,'#dcdcd4','#555',1.2);
-  s += _cc(126,364,2.5,'#222')+_cc(144,364,2.5,'#222')+_cc(135,379,2.5,'#222');
-  s += '<path d="M127,351 L127,346 M143,351 L143,346" stroke="#333" stroke-width="1.2"/>';
-  s += '<path d="M127,385 L127,390 M143,385 L143,390" stroke="#333" stroke-width="1.2"/>';
-  s += _rr(168,307,50,32,'#f4f4ee','#111',1);
-  s += _tt(193,315,'DC MULTIMETER',4.2,'700','#111');
-  // The AA bay's own meter. 'd4' was painted on the DIN bay's right-hand
-  // meter, a bay away from the AA+/- jacks it reads.
-  s += _lv(193,327,'d4',13);
-  s += _lu(211,331,'d4',7);
-  s += _jack(184,292,8);
-  s += _cc(213,292,8,'#151515','#000',1.2)+_cc(213,292,3.5,'#000');
-  s += _jack(184,358,8);
-  s += _cc(213,358,8,'#151515','#000',1.2)+_cc(213,358,3.5,'#000');
-  s += _tt(184,283,'+',5.5,'700','#333')+_tt(213,283,'-',5.5,'700','#333');
-  s += _tt(184,370,'-',5.5,'700','#333')+_tt(213,370,'-',5.5,'700','#333');
+  // The AA bay is no longer a power supply with a tiny DC multimeter bolted
+  // on. It is the same meter unit as the DIN bay next door: one face, four
+  // jacks, the face's own terminals immediately beside it.
+  s += _tt(96,278,'AA METER',5.5,'700','#333','start');
+  s += meterFace(78, 'd2');
+  s += meterJacks(184, 213, 292, 358, 5.5);
   return s;
 }
 
@@ -286,42 +316,12 @@ function spriteDINMeters(){
   s += _rr(223,264,256,134,'#ecece4','#333',1);
   s += _screw(233,274)+_screw(469,274)+_screw(233,388)+_screw(469,388);
   s += _tt(470,278,'AZ-VIDC',8,'700','#111','end');
-  function meter(x0?: any, disp?: any) {
-    var t = '';
-    // Casing stops at ref y368 and the mode strip lives BELOW it (372..394).
-    // The strip used to be drawn at y374 while the casing ran to y391, so the
-    // V/A/W buttons sat half inside the meter body and covered the LCD.
-    // Width is 80 (was 95) so the two meters and the DIN jack column all
-    // fit without touching.
-    t += _rr(x0,288,80,80,'#9a9a94','#333',1.2);
-    t += _rr(x0+5,294,70,16,'#5a5a56','#222',0.8);
-    t += _tt(x0+22,306,'ENTER',3.2,'400','#ddd');
-    t += _tt(x0+56,306,'CLEAR',3.2,'400','#ddd');
-    t += _rr(x0+5,314,70,46,'#3a3a38','#111',1);
-    t += _rr(x0+9,318,62,38,'#5aa8de','#0a2530',1);
-    t += _lv(x0+38,346,disp,15);
-    t += _lu(x0+57,352,disp,8);
-    t += _rr(x0+5,372,70,22,'#3a3a38','#111',0.9,2);
-    for (var i = 0; i < 3; i++) {
-      t += _rr(x0+8+i*22,375,18,14,'#5a5a56','#222',0.8,2);
-    }
-    return t;
-  }
-  // Left meter reads the DIN-1 pair (the TOP jack row), right meter reads
-  // DIN-2 (the BOTTOM row) - so the number sits under the jacks it belongs
-  // to. These were 'd3' and 'd4', which parked the DIN-1 voltage up in the
-  // MINS SCOPY bay and left this one showing the field channel instead.
-  s += meter(230, 'd2');
-  s += meter(316, 'd3');
-  s += _jack(440,290,8);
-  s += _cc(462,290,8,'#151515','#000',1.2)+_cc(462,290,3.5,'#000');
-  s += _rr(425,305,52,32,'#f4f4ee','#111',1);
-  s += _tt(451,318,'DC DIKJOSTER',3.6,'700','#111');
-  s += _tt(451,329,'010Y - 25A',3.6,'400','#333');
-  s += _jack(440,360,8);
-  s += _cc(462,360,8,'#151515','#000',1.2)+_cc(462,360,3.5,'#000');
-  s += _tt(440,283,'+',5,'700','#333')+_tt(462,283,'-',5,'700','#333');
-  s += _tt(440,370,'-',5,'700','#333')+_tt(462,370,'-',5,'700','#333');
+  s += _tt(246,278,'DIN METER',5.5,'700','#333','start');
+  s += meterFace(230, 'd3');
+  s += meterJacks(350, 382, 292, 358, 5);
+  s += _rr(408,305,52,32,'#f4f4ee','#111',1);
+  s += _tt(434,318,'DC DIKJOSTER',3.6,'700','#111');
+  s += _tt(434,329,'010Y - 25A',3.6,'400','#333');
 
   return s;
 }

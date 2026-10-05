@@ -117,7 +117,12 @@ describe('sprite extraction fidelity', () => {
               expect(svg).toContain('data-live="' + id + '"');
               expect(svg).toContain('data-live-unit="' + id + '"');
             }
-            for (const id of ['d3', 'd4']) {
+            // Row 2 is two identical meter units. Each face carries one
+            // live node, and the AA bay's used to be 'd4' - a third, separate
+            // display bolted into a power-supply bay a bay away from the
+            // jacks it read. There is no d4 any more: the AA bay is d2 and
+            // the DIN bay is d3.
+            for (const id of ['d2', 'd3']) {
               expect(svg).toContain('data-live="' + id + '"');
               expect(svg).toContain('data-live-unit="' + id + '"');
             }

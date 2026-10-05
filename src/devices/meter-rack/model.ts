@@ -133,40 +133,39 @@ export class MeterRack implements Device {
         pos: ['L1b', 'L2b', 'L3b'], neg: ['Nb'], lines: true,
         V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
       },
-      // The DIN bay brings out DIN1± and DIN2±. On this bench those two pairs
-      // are wired to TWO DIFFERENT branches:
+      // Row 2 is TWO IDENTICAL meter units, one per bay. Each owns its own
+      // 2x2 jack block and the face drawn immediately to the left of it:
       //
-      //   DIN1+ / DIN1-  ->  A1 / A2        (the ARMATURE)
-      //   DIN2+ / DIN2-  ->  F1 / rheostat  (the FIELD loop)
+      //   top pair    ->  the original terminals
+      //   bottom pair ->  the same line taken through the meter's ammeter
       //
-      // so d2 is the armature monitor and d3 is the field monitor, and they
-      // read DIFFERENT things. Binding both to the same four jacks (which an
-      // earlier revision did) made the two LCDs show identical numbers - two
-      // meters, one measurement, which is not two meters at all.
+      // so the number you are reading is always beside the jacks you are
+      // moving. Before this, both faces sat in one bay while BOTH sets of
+      // jacks sat in the other, and the panel gave you no way to know.
       //
-      // Each is a 2-jack instrument here: d2 sits ACROSS the armature (a
-      // voltmeter) and d3 sits IN LINE with the field (an ammeter). Its V, I
-      // and W are all computed from its own two posts - whichever of them is
-      // meaningful for that connection is the one worth reading.
+      // The SHUNT sits between the two + jacks, never between a + and a -.
+      // Current in on the top +, through the shunt, out on the bottom + to
+      // the load; the two - jacks are one solid return node. So the CURRENT
+      // pair is (+, +2) and the VOLTAGE pair is (+2, -2): amps across the
+      // shunt, volts across the load, and W is their product.
+      //
+      // Getting this backwards - shunt between +2 and -2 - leaves the top +
+      // a dead end AND drops a 0.01 ohm short straight across the load, so a
+      // correctly-wired bench reads zero everywhere with no error shown.
       {
-        id: 'd2', label: 'DIN 1', mode: 'V',
-        pos: ['DIN1+'], neg: ['DIN1-'],
-        V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
-      },
-      {
-        id: 'd3', label: 'DIN 2', mode: 'A',
-        pos: ['DIN2-'], neg: ['DIN2+'], series: true,
-        V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
-      },
-      {
-        id: 'd4', label: 'AZ-VIDC 2', mode: 'A',
-        // The AA bay is a 4-wire wattmeter: AA+2/AA-2 carry the load current
-        // through the shunt, while AA+/AA- tap the voltage across the
-        // armature. Both pairs are used, so this display reports volts AND
-        // amps of its own branch at once - which is exactly why the bay has
-        // four jacks and not two.
-        pos: ['AA+2'], neg: ['AA-2'], series: true,
+        id: 'd2', label: 'AA METER', mode: 'V',
+        // Sense across the ORIGINAL pair (AA+ / AA-), not the ammeter pair.
+        // Wiring only the top pair has to give a plain voltmeter reading -
+        // that is the common case by far. Sensing on the bottom pair instead
+        // meant an unused ammeter path left the face sitting at 0 V.
+        pos: ['AA+'], neg: ['AA+2'], series: true,
         vpos: ['AA+'], vneg: ['AA-'],
+        V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
+      },
+      {
+        id: 'd3', label: 'DIN METER', mode: 'V',
+        pos: ['DIN1+'], neg: ['DIN2+'], series: true,
+        vpos: ['DIN1+'], vneg: ['DIN1-'],
         V: 0, I: 0, A: 0, W: 0, shown: 0, over: false
       }
     ];
@@ -210,18 +209,13 @@ export class MeterRack implements Device {
     chain(this.seriesPos);
     chain(this.seriesNeg);
 
-    // Every display is a SEPARATE instrument. The only bonds left are the
-    // redundant landings WITHIN one display's own jack pair:
-    //   AA bay : col L = + (AA+/AA+2), col R = - (AA-/AA-2)
-    //   DIN bay: d2 reads DIN1+/- and d3 reads DIN2+/- - INDEPENDENT pairs.
-    // The two DIN pairs used to be bonded (DIN1 is DIN2), which tied the top
-    // DIN meter to the bottom one. They are separate channels, so they must
-    // not share a node.
-    //
-    // AA+ is NOT bonded to AA+2 - that pair is the ammeter's current path and
-    // a bond across it would short the shunt. AA- to AA-2 stays bonded: that
-    // is the straight return leg, one node either side of the bay.
+    // Each meter unit has ONE bond, and it is always the same one: the two
+    // minus jacks are the straight return leg, so they are one node either
+    // side of the unit. The two PLUS jacks are deliberately NOT bonded - that
+    // pair is the ammeter's current path, and a bond across it would short
+    // the shunt to nothing and read zero amps forever.
     B.push(['AA-', 'AA-2']);
+    B.push(['DIN1-', 'DIN2-']);
 
     this.VRange = opts.VRange ?? 500;
     this.ARange = opts.ARange ?? 20;
@@ -271,12 +265,35 @@ export class MeterRack implements Device {
     // frame, so all three are already in hand - without this the display would
     // keep the previous mode's number until the solver runs another step,
     // which never happens if the bench is stopped.
-    c.shown = c.series ? c.I : mode === 'V' ? c.V : mode === 'A' ? c.I : c.W;
-    c.over = c.series
-      ? Math.abs(c.I) > this.ARange * 1.2
-      : mode === 'V' ? Math.abs(c.V) > this.VRange * 1.2
+    c.shown = mode === 'V' ? c.V : mode === 'A' ? c.I : c.W;
+    c.over =
+      mode === 'V' ? Math.abs(c.V) > this.VRange * 1.2
       : mode === 'A' ? Math.abs(c.I) > this.ARange * 1.2
       : Math.abs(c.W) > this.WRange * 1.2;
+  }
+
+  /**
+   * Panel state: which V / A / W button each display is sitting on.
+   *
+   * Without this a reloaded bench came back with every display on its
+   * construction default, and for a DIN bay that default is 'A' - a 0.01 ohm
+   * shunt straight across whatever it is wired to. A bench reading a clean
+   * voltage before the reload would trip its supply after it, with nothing on
+   * the panel to explain why.
+   */
+  getState(): Record<string, unknown> {
+    const modes: Record<string, string> = {};
+    for (const c of this.channels) modes[c.id] = c.mode;
+    return { modes };
+  }
+
+  setState(state: Record<string, unknown>): void {
+    const modes = state.modes as Record<string, string> | undefined;
+    if (!modes || typeof modes !== 'object') return;
+    for (const c of this.channels) {
+      const m = modes[c.id];
+      if (m === 'V' || m === 'A' || m === 'W') c.mode = m;
+    }
   }
 
   stamp(mna: Mna, netOf: NetOf, netlist: { computeNets(): Array<{ id: number; terminals: string[] }> }): void {
@@ -334,14 +351,18 @@ export class MeterRack implements Device {
         // even with a live supply on them.
         const n = resolve(c.neg);
         for (const p of c.pos) put(resolve([p]), n, 1 / 1e6);
-      } else if (c.series) {
-        // This display sits IN the current path: its own two posts carry the
-        // branch current, and its own shunt turns that current into a
-        // measurable drop. Independent of every other display.
+      } else if (c.vpos && c.vneg) {
+        // TRUE 4-wire instrument (the AA wattmeter). Its current pair ALWAYS
+        // carries the shunt and its sense pair is ALWAYS high-Z - that is
+        // what makes it a wattmeter. The mode button only chooses which of
+        // the three numbers it shows, never how it is wired.
         put(resolve(c.pos), resolve(c.neg), 1 / this.shunt);
-        // 4-wire display: a SECOND pair taps the voltage across the load.
-        // High-Z, so it does not disturb the branch it is sensing.
-        if (c.vpos && c.vneg) put(resolve(c.vpos), resolve(c.vneg), 1 / 1e6);
+        put(resolve(c.vpos), resolve(c.vneg), 1 / 1e6);
+      } else if (c.series && c.mode === 'A') {
+        // 2-jack DIN meter in AMMETER mode. The V / A / W button IS the
+        // function switch: pressing A drops the shunt INTO the branch, which
+        // is why an ammeter goes in series and a voltmeter does not.
+        put(resolve(c.pos), resolve(c.neg), 1 / this.shunt);
       } else {
         // This display sits ACROSS its branch - a high-Z voltmeter. It still
         // reads its OWN two posts, but it must not load the branch, so no
@@ -404,8 +425,13 @@ export class MeterRack implements Device {
       // shunt - no current flows through it, and reporting one would be a
       // lie. Each display's answer depends only on its own wiring.
       const iDrop = a !== undefined && b !== undefined ? (sol.V[a] ?? 0) - (sol.V[b] ?? 0) : 0;
+      // The shunt is only IN the circuit when this display is actually in
+      // ammeter mode. Reading a current off a high-Z voltmeter - or off a
+      // 4-wire wattmeter's SENSE pair - would divide a normal line voltage by
+      // 0.01 ohm and report kiloamps that are not flowing anywhere.
+      const hasShunt = (c.vpos && c.vneg) || (c.series && c.mode === 'A');
       const iOwn =
-        c.series && a !== undefined && b !== undefined && a !== b
+        hasShunt && a !== undefined && b !== undefined && a !== b
           ? iDrop / this.shunt
           : 0;
       c.I = iOwn + sol.rng.gauss() * Math.abs(iOwn) * this.noise;

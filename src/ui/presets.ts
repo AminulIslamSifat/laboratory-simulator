@@ -106,7 +106,15 @@ const AM_OUT = 'R';     // rack ammeter, row-3 leftmost jack
  *   rheostat     A_TOP A_BOT B_TOP B_YEL B_RED
  *   load_bank    A B
  *   meter_rack   L1 L2 L3 N | R D2 C | L1b..Nb | AA± | DIN1± | DIN2±
- *                 (ammeter sense = N/R, see AM_IN/AM_OUT)
+ *
+ * Row 2 is TWO IDENTICAL METER UNITS. Each owns a face and a 2x2 block of
+ * jacks to its right:
+ *
+ *   top pair    -> the original terminals   (AA+ / AA-  ·  DIN1+ / DIN1-)
+ *   bottom pair -> the same line through the meter's ammeter
+ *                                           (AA+2 / AA-2  ·  DIN2+ / DIN2-)
+ *
+ * so the number you are reading always sits beside the jacks you are moving.
  */
 
 /**
@@ -121,6 +129,22 @@ function readAmps(lab: Lab): void {
   const rack = lab.devices.find((d) => d.kind === RACK);
   const m = rack?.model as { setDisplayMode?: (id: string, mode: string) => void } | undefined;
   if (m && typeof m.setDisplayMode === 'function') m.setDisplayMode('d3', 'A');
+}
+
+/**
+ * Put BOTH row-2 faces on V.
+ *
+ * The DIN face (d3) reads the source and the AA face (d2) reads the
+ * resultant. Both are voltmeters, so both must be on V — the polarity test
+ * compares two voltages and neither reading is a current.
+ */
+function readVolts(lab: Lab): void {
+  const rack = lab.devices.find((d) => d.kind === RACK);
+  const m = rack?.model as { setDisplayMode?: (id: string, mode: string) => void } | undefined;
+  if (m && typeof m.setDisplayMode === 'function') {
+    m.setDisplayMode('d2', 'V');
+    m.setDisplayMode('d3', 'V');
+  }
 }
 
 /** Find a placed device's model by kind, typed. */
@@ -222,18 +246,23 @@ export const PRESETS: Record<string, Preset> = {
       lab.place(RACK, 30, 520);
 
       wireAll(lab, [
-        // primary loop; the rack ammeter sits on the RETURN leg (N-R)
-        ['power_supply', 'AC-L1', 'single_phase_transformer', 'P230'],
-        ['single_phase_transformer', 'P0', RACK, AM_IN],
-        [RACK, AM_OUT, 'power_supply', 'AC-N'],
-        // ADDITIVE strap: primary return tied to the secondary START (2U1).
-        // The 2U winding (400 V tap) is ~1.74x the primary, so the series
-        // sum Va + Vs2 gives a large, unambiguous reading (~220 V) - unlike
-        // the 3U winding, which is ~1:1 and makes the sum ~= the primary.
+        // Supply enters the DIN unit on its ORIGINAL pair and leaves on the
+        // ammeter pair into the primary. The two minus jacks are one node
+        // inside the unit, so AC-N can land on either of them.
+        ['power_supply', 'AC-L1', RACK, 'DIN1+'],
+        [RACK, 'DIN2+', 'single_phase_transformer', 'P230'],
+        ['power_supply', 'AC-N', RACK, 'DIN1-'],
+        // Second return leg, out through the unit's ammeter to the primary
+        // return.
+        [RACK, 'DIN2-', 'single_phase_transformer', 'P0'],
+        // AA face across the two open ends.
+        ['single_phase_transformer', 'P230', RACK, 'AA+'],
+        // ADDITIVE: primary return strapped to the 2U START, then the whole
+        // 2U+3U chain in series-aiding, probe at the far end (3U2).
+        // Vc = Va + Vb, so Vc > Va.
         ['single_phase_transformer', 'P0', 'single_phase_transformer', '2U1'],
-        // voltmeter across the primary (Va) and the far end (Vc)
-        [RACK, DIN_P, 'single_phase_transformer', 'P230'],
-        [RACK, DIN_N, 'single_phase_transformer', '2U2']
+        ['single_phase_transformer', '2U2', 'single_phase_transformer', '3U1'],
+        ['single_phase_transformer', '3U2', RACK, 'AA-']
       ]);
       lab.titleEl.textContent = 'Experiment 02 \u00b7 Polarity Test \u2014 Additive Connection';
       lab.fitView();
@@ -243,7 +272,7 @@ export const PRESETS: Record<string, Preset> = {
         m.rails.vac.on = true;
         m.rails.vac.set = 100;   // reduced voltage, as the procedure requires
       });
-      readAmps(lab);
+      readVolts(lab);
     }
   },
 
@@ -262,18 +291,20 @@ export const PRESETS: Record<string, Preset> = {
       lab.place(RACK, 30, 520);
 
       wireAll(lab, [
-        // primary loop; the rack ammeter sits on the RETURN leg (N-R)
-        ['power_supply', 'AC-L1', 'single_phase_transformer', 'P230'],
-        ['single_phase_transformer', 'P0', RACK, AM_IN],
-        [RACK, AM_OUT, 'power_supply', 'AC-N'],
-        // SUBTRACTIVE strap: primary return tied to the secondary FAR end
-        // (2U2). The windings oppose, so P230 against 2U2 now reads a small
-        // Va - Vs2 instead of the additive Va + Vs2.
-        ['single_phase_transformer', 'P0', 'single_phase_transformer', '2U2'],
-        // meter across the SAME pair as the additive bench, so the display
-        // path is identical between the two - only the strap differs.
-        [RACK, DIN_P, 'single_phase_transformer', 'P230'],
-        [RACK, DIN_N, 'single_phase_transformer', '2U1']
+        // Identical spine to the additive bench - only the last three wires
+        // move. Supply in on the DIN unit's original pair, out through its
+        // ammeter into the primary.
+        ['power_supply', 'AC-L1', RACK, 'DIN1+'],
+        [RACK, 'DIN2+', 'single_phase_transformer', 'P230'],
+        ['power_supply', 'AC-N', RACK, 'DIN1-'],
+        [RACK, 'DIN2-', 'single_phase_transformer', 'P0'],
+        ['single_phase_transformer', 'P230', RACK, 'AA+'],
+        // SUBTRACTIVE: the mirror. Primary return strapped to the 3U FAR end,
+        // the chain walked the other way, probe at 2U1. The windings oppose,
+        // so Vc = Va - Vb and Vc < Va.
+        ['single_phase_transformer', 'P0', 'single_phase_transformer', '3U2'],
+        ['single_phase_transformer', '3U1', 'single_phase_transformer', '2U2'],
+        ['single_phase_transformer', '2U1', RACK, 'AA-']
       ]);
       lab.titleEl.textContent = 'Experiment 02 \u00b7 Polarity Test \u2014 Subtractive Connection';
       lab.fitView();
@@ -283,7 +314,7 @@ export const PRESETS: Record<string, Preset> = {
         m.rails.vac.on = true;
         m.rails.vac.set = 100;   // reduced voltage, as the procedure requires
       });
-      readAmps(lab);
+      readVolts(lab);
     }
   },
 

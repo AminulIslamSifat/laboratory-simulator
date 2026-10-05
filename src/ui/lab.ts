@@ -1638,8 +1638,10 @@ export class Lab {
       const m = d.model as Device & { type?: string; enabled?: boolean };
       if (m.type === 'dc_supply') m.enabled = false;
     });
-    this._renderMeters();
-    this._updateSpriteReadouts();
+    // Re-solve once with every supply dead, so the panel actually drops to
+    // zero. Stopping used to leave the last live numbers frozen on the LCDs,
+    // which reads as a bench that is still energised.
+    this._resettle();
   }
 
   /** True while the last step reported a rank-deficient matrix. */
@@ -2166,6 +2168,31 @@ export class Lab {
     // that has to know about the dirty flag. Guarded by the hold counter so
     // a load or a clear can settle without marking itself unsaved.
     if (this._dirtyHold === 0) this._setDirty(true);
+
+    this._resettle();
+  }
+
+  /**
+   * Take a fresh snapshot and repaint, for when the bench is NOT running.
+   *
+   * The readout cache is a snapshot taken at the end of `step()`. While the
+   * loop runs, a new snapshot lands every frame and a topology change shows
+   * up on its own. While it is stopped NOTHING takes a snapshot - so pulling
+   * a wire left the last live numbers frozen on every display, and a meter
+   * with nothing on its jacks went on reading 249.4 V. `stop()` de-energised
+   * the supplies but never re-solved, so the numbers even survived an
+   * explicit Stop.
+   */
+  private _resettle(): void {
+    if (this.running) return;   // the loop snapshots every frame
+    if (!this.lastT) return;    // never energised - there is no stale reading
+    try {
+      this.sim.step(1 / 60);
+    } catch {
+      // A half-finished edit can be singular; the running loop reports that.
+    }
+    this._renderMeters();
+    this._updateSpriteReadouts();
   }
 
   /** Set the dirty flag and notify, only when it actually changes. */
