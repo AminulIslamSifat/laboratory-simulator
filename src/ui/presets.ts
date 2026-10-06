@@ -31,6 +31,7 @@ import { EQUIPMENT } from '../devices/index.js';
 import type { DCSupply, DCMachine } from '../devices/index.js';
 import type { Rheostat } from '../devices/rheostat/model.js';
 import { EXP04_BENCH, EXP04_IDS } from './exp04-bench.js';
+import { EXP05_BENCH } from './exp05-bench.js';
 
 /** A wire as `[fromKind, fromTerm, toKind, toTerm]`. */
 type WireSpec = [string, string, string, string];
@@ -125,10 +126,10 @@ const AM_OUT = 'R';     // rack ammeter, row-3 leftmost jack
  * display to A is what makes the number visible; the wiring alone is not
  * enough because the default mode is V.
  */
-function readAmps(lab: Lab): void {
+function readAmps(lab: Lab, face = 'd3'): void {
   const rack = lab.devices.find((d) => d.kind === RACK);
   const m = rack?.model as { setDisplayMode?: (id: string, mode: string) => void } | undefined;
-  if (m && typeof m.setDisplayMode === 'function') m.setDisplayMode('d3', 'A');
+  if (m && typeof m.setDisplayMode === 'function') m.setDisplayMode(face, 'A');
 }
 
 /**
@@ -331,17 +332,16 @@ export const PRESETS: Record<string, Preset> = {
       lab.place(RACK, 30, 520);
 
       wireAll(lab, [
-        // Primary at rated voltage; the rack ammeter sits on the RETURN
-        // leg (N-R), so it reads the no-load current I0.
-        ['power_supply', 'AC-L1', 'single_phase_transformer', 'P230'],
-        ['single_phase_transformer', 'P0', RACK, AM_IN],
-        [RACK, AM_OUT, 'power_supply', 'AC-N'],
-        // Secondary fully OPEN - no wire on 2U1/2U2 or the 3U winding. The
-        // voltmeter reads the APPLIED PRIMARY voltage V0, because that is the
-        // independent variable in this test; the secondary EMF is derived
-        // from it by the turns ratio, not measured.
-        [RACK, VM_P, 'single_phase_transformer', 'P230'],
-        [RACK, VM_N, 'single_phase_transformer', 'P0']
+        // Supply in on the AA face's ORIGINAL pair, out through its ammeter
+        // into the primary. The two minus jacks are one node inside the unit,
+        // so the return only has to reach one of them - and on this unit that
+        // jack is NOT the ammeter output, so it cannot short the shunt.
+        ['power_supply', 'AC-L1', RACK, 'AA+'],
+        [RACK, 'AA-', 'power_supply', 'AC-N'],
+        [RACK, 'AA+2', 'single_phase_transformer', 'P230'],
+        [RACK, 'AA-2', 'single_phase_transformer', 'P0'],
+        // Secondaries in series but the loop left OPEN - that is the test.
+        ['single_phase_transformer', '2U2', 'single_phase_transformer', '3U1']
       ]);
       lab.titleEl.textContent = 'Experiment 03 \u00b7 Open-Circuit Test of a Single-Phase Transformer';
       lab.fitView();
@@ -353,7 +353,8 @@ export const PRESETS: Record<string, Preset> = {
         m.rails.vac.on = true;
         m.rails.vac.set = 230;
       });
-      readAmps(lab);
+      // V0 on the AA face; I0 shows on the supply's VAR AC - I readout.
+      readVolts(lab);
     }
   },
 
@@ -370,18 +371,14 @@ export const PRESETS: Record<string, Preset> = {
       lab.place(RACK, 30, 520);
 
       wireAll(lab, [
-        // primary at reduced voltage; the rack ammeter sits on the RETURN
-        // leg (N-R)
-        ['power_supply', 'AC-L1', 'single_phase_transformer', 'P230'],
-        ['single_phase_transformer', 'P0', RACK, AM_IN],
-        [RACK, AM_OUT, 'power_supply', 'AC-N'],
-        // TOP 2U winding SHORTED on itself (2U1 to 2U2). The series coil is
-        // already in the primary, so the short does not need to pass through
-        // the rack. The bottom 3U winding is left unconnected.
-        ['single_phase_transformer', '2U1', 'single_phase_transformer', '2U2'],
-        // voltmeter across the primary to read the applied Vsc
-        [RACK, VM_P, 'single_phase_transformer', 'P230'],
-        [RACK, VM_N, 'single_phase_transformer', 'P0']
+        // Same spine as the open-circuit bench - only the secondary changes.
+        ['power_supply', 'AC-L1', RACK, 'AA+'],
+        [RACK, 'AA-', 'power_supply', 'AC-N'],
+        [RACK, 'AA+2', 'single_phase_transformer', 'P230'],
+        [RACK, 'AA-2', 'single_phase_transformer', 'P0'],
+        // Both secondaries in ONE CLOSED LOOP - that is the short.
+        ['single_phase_transformer', '2U2', 'single_phase_transformer', '3U1'],
+        ['single_phase_transformer', '3U2', 'single_phase_transformer', '2U1']
       ]);
       lab.titleEl.textContent = 'Experiment 03 \u00b7 Short-Circuit Test of a Single-Phase Transformer';
       lab.fitView();
@@ -397,7 +394,9 @@ export const PRESETS: Record<string, Preset> = {
         m.rails.vac.on = true;
         m.rails.vac.set = 10;
       });
-      readAmps(lab);
+      // The AA face is the one sitting in the primary loop here, so THAT is
+      // the display that has to be on A to show Isc.
+      readAmps(lab, 'd2');
     }
   },
 
@@ -469,26 +468,17 @@ export const PRESETS: Record<string, Preset> = {
     label: 'Exp 05 \u00b7 1\u03c6 Async Motor',
     sub: 'M-R/CV \u00b7 C = 12.5 \u00b5F',
     build(lab) {
-      lab.clear();
-      lab.place('power_supply', 30, 30);
-      lab.place('async_motor_1p', 520, 60);
-      lab.place(RACK, 30, 520);
-
-      wireAll(lab, [
-        // Main winding through the rack's series ammeter coil.
-        // U1-U2 is the main (run) winding. There is no 'Run' jack.
-        ['power_supply', 'AC-L1', 'async_motor_1p', 'U1'],
-        ['async_motor_1p', 'U2', RACK, AM_IN],
-        [RACK, AM_OUT, 'power_supply', 'AC-N'],
-        // Auxiliary winding in series with the starting capacitor.
-        // Z1-Z2 is the auxiliary winding; C-C2 is the capacitor.
-        ['power_supply', 'AC-L1', 'async_motor_1p', 'Z1'],
-        ['async_motor_1p', 'Z2', 'async_motor_1p', 'C'],
-        ['async_motor_1p', 'C2', 'power_supply', 'AC-N'],
-        // Voltmeter across the main winding.
-        [RACK, VM_P, 'async_motor_1p', 'U1'],
-        [RACK, VM_N, 'async_motor_1p', 'U2']
-      ]);
+      // This preset is the REAL bench, loaded verbatim from a working session
+      // (MongoDB roll 2403123, "Real-exp5") rather than hand-wired.
+      //
+      // The wiring came off the actual lab bench:
+      //   · Z1 -> C links the auxiliary winding to the start capacitor internally
+      //   · Z2 -> U2 ties the aux winding return to the main winding return
+      //   · U1 -> C2 completes the capacitor loop through the main winding
+      //   · AC-N -> rack N, rack N -> motor U2 provides the neutral return
+      //   · AC-L3 -> rack L3 feeds the 3-phase line through the rack metering
+      //   · U1 -> rack C taps the voltmeter across the main winding
+      lab.loadBench(EXP05_BENCH);
       lab.titleEl.textContent = 'Experiment 05 \u00b7 Single-Phase Induction Motor \u2014 Capacitor Start';
       lab.fitView();
     },

@@ -18,6 +18,7 @@
  */
 
 import { refreshIcons } from './icons.js';
+import { isMobileView } from './perf.js';
 import { Netlist } from '../engine/netlist.js';
 import { Simulator } from '../engine/simulator.js';
 import type { Device, Readout, Solution } from '../engine/types.js';
@@ -49,6 +50,39 @@ export interface DeviceEntry {
   rot: number;
   /** Rotor angle accumulator, drives the [data-spin] group. */
   _spinAngle?: number;
+
+  /**
+   * The device's element in the world, stashed at draw time.
+   *
+   * The per-frame readout pass used to re-query the world for this by id on
+   * every frame, for every device. Holding it here removes a selector match
+   * per device per frame. `isConnected` is checked before use, so a stale
+   * reference can never be written to.
+   */
+  _el?: HTMLElement;
+
+  /**
+   * Last values written to the element, so a steady frame writes nothing.
+   *
+   * `classList.add` and `style.setProperty` both invalidate style even when
+   * the value is unchanged, and these are written from inside the run loop.
+   * Comparing first turns a per-frame invalidation into a no-op.
+   */
+  _rumbling?: boolean;
+  _rumbleDur?: string;
+  _hot?: boolean;
+  _heat?: string;
+
+  /**
+   * The sprite's live-value nodes, queried once and reused.
+   *
+   * The node SET only changes when a display swaps its binding list — V shows
+   * `d1:L1..L3`, A/W shows a single `d1` — so the cache is dropped at exactly
+   * that one call site (the display-mode switch in `_renderDevice`) and
+   * rebuilt on the next frame. Every other frame reuses it untouched.
+   */
+  _live?: Element[];
+  _liveUnits?: Element[];
 }
 
 /** One undo record. */
@@ -181,6 +215,18 @@ const CONTROL_SIZE: Record<string, number> = {
   button: 30
 };
 
+/**
+ * Linear readout lookup by name.
+ *
+ * Used on the mobile path in place of a Map. A device exposes a handful of
+ * readouts, so a linear scan beats the allocation — and unlike `Map.get` it
+ * cannot be the thing that silently stops matching when a name changes.
+ */
+function findReadout(ros: Readout[], name: string): Readout | undefined {
+  for (let i = 0; i < ros.length; i++) if (ros[i].name === name) return ros[i];
+  return undefined;
+}
+
 let _idc = 0;
 /** Monotonic, collision-free device id within a session. */
 function uid(p: string): string {
@@ -246,6 +292,23 @@ export class Lab {
 
   private undoStack: UndoAction[] = [];
   private readonly UNDO_MAX = 40;
+
+  /**
+   * Structure signature of the meter panel, mobile path only.
+   *
+   * Covers the device list, each device's dead flag, and the NAMES of every
+   * readout it exposes — deliberately not their values. A number ticking up
+   * therefore does not rebuild the panel, but a display switching from V to A
+   * (which swaps `d1:L1..L3` for a single `d1`) does. See
+   * `_renderMetersMobile`.
+   */
+  private _meterSig = '';
+
+  /** Cached value/unit nodes in the meter panel, keyed `deviceId|readoutName`. */
+  private _meterCards = new Map<string, { value: HTMLElement | null; unit: HTMLElement | null }>();
+
+  /** Guards the deferred overflow check so it runs at most once per frame. */
+  private _overflowSoon = false;
 
   wiring: Wiring;
 
@@ -873,12 +936,25 @@ export class Lab {
       const model = entry.model as Device & { setDisplayMode?: (d: string, m: string) => void };
       if (model.setDisplayMode) {
         model.setDisplayMode(b.dataset.disp as string, b.dataset.mode as string);
+        // The binding SET just changed — V swaps `d1:L1..L3` for a single
+        // `d1` — so the cached sprite node lists are stale and must be
+        // re-queried on the next frame.
+        entry._live = undefined;
+        entry._liveUnits = undefined;
         this._updateSpriteReadouts();
         this._renderMeters();
       }
     });
 
     this.world.appendChild(el);
+    // Stash the element on the entry so the per-frame readout pass does not
+    // have to re-query the world for it. Reset every placement, so it can
+    // never carry a stale node from a previous bench into this one.
+    entry._el = el;
+    entry._rumbling = false;
+    entry._hot = false;
+    entry._rumbleDur = '';
+    entry._heat = '';
     this._bindDrag(el, entry);
     this._bindControls(el, entry);
     this._applyRotation(el, entry);
@@ -1717,8 +1793,17 @@ export class Lab {
    * LCD and anything else asking in the same frame all see the SAME numbers.
    */
   _updateSpriteReadouts(): void {
+    const mobile = isMobileView();
     this.devices.forEach((d) => {
-      const el = this.world.querySelector('.device[data-id="' + d.id + '"]') as HTMLElement | null;
+      // Use the element stashed at placement time instead of re-querying the
+      // world by id on every frame. `isConnected` is the guard: a removed
+      // device leaves `this.devices` in the same call, but a bench restore can
+      // leave an entry pointing at a detached node, and writing into that is
+      // silent rather than loud. The query stays as a fallback so a device
+      // placed by any path that predates the stash still renders.
+      const el = d._el && d._el.isConnected
+        ? d._el
+        : (this.world.querySelector('.device[data-id="' + d.id + '"]') as HTMLElement | null);
       if (!el) return;
 
       // Prefer the simulator snapshot (all consumers agree within a frame).
@@ -1729,12 +1814,22 @@ export class Lab {
       if (!ros.length && typeof d.model.readouts === 'function') {
         try { ros = d.model.readouts(); } catch { ros = []; }
       }
-      const byName = new Map<string, Readout>();
-      ros.forEach((r) => byName.set(r.name, r));
+      // The name→readout map is only worth building on a desktop, where the
+      // per-device node counts are small and one Map per device per frame is
+      // lost in the noise. On a phone the array is walked instead: a device
+      // exposes a handful of readouts, and allocating a Map plus a string key
+      // per entry sixty times a second is pure churn for no lookup benefit.
+      const byName = mobile ? null : new Map<string, Readout>();
+      if (byName) ros.forEach((r) => byName.set(r.name, r));
 
-      el.querySelectorAll('[data-live]').forEach((node) => {
+      // Node lists are queried ONCE and cached on the entry — see the
+      // `_live`/`_liveUnits` fields on DeviceEntry for the invalidation rule.
+      if (!d._live) d._live = Array.from(el.querySelectorAll('[data-live]'));
+      if (!d._liveUnits) d._liveUnits = Array.from(el.querySelectorAll('[data-live-unit]'));
+
+      d._live.forEach((node) => {
         const key = node.getAttribute('data-live') as string;
-        const r = byName.get(key);
+        const r = byName ? byName.get(key) : findReadout(ros, key);
         // Blank the node when its readout is absent this frame. A three-line
         // display swaps its bindings when the mode changes (V shows
         // `d1:L1..L3`, A/W shows the single `d1`), so the nodes that are not
@@ -1744,10 +1839,10 @@ export class Lab {
         const v = typeof r.value === 'number' ? formatReading(r.value) : r.value;
         (node as Element).textContent = String(v);
       });
-      el.querySelectorAll('[data-live-unit]').forEach((node) => {
+      d._liveUnits.forEach((node) => {
         const key = node.getAttribute('data-live-unit') as string;
-        const r = byName.get(key);
-        (node as Element).textContent = r ? (r.unit || '') : '';
+        const r = byName ? byName.get(key) : findReadout(ros, key);
+        node.textContent = r ? (r.unit || '') : '';
       });
 
       // Slide each unit's wiper slider to match its model position (0..1).
@@ -1831,7 +1926,7 @@ export class Lab {
         if (key === 'line') {
           lit = lineLit;
         } else {
-          const r = byName.get(key);
+          const r = byName ? byName.get(key) : findReadout(ros, key);
           lit = !!(r && Number(r.value) >= 1);
         }
         (node as Element).setAttribute('fill', lit ? '#ff4d4d' : '#3a1a1a');
@@ -1930,7 +2025,13 @@ export class Lab {
         const vbW = svgEl && svgEl.viewBox ? svgEl.viewBox.baseVal.width : 0;
         const userPerPx = vbW > 0 && d.w > 0 ? vbW / d.w : 1;
         const zoom = this.view.k > 0 ? this.view.k : 1;
-        const blurPx = BLUR_MAX_PX * Math.max(0, (frac - 0.45) / 0.55);
+        // Motion blur is the one effect here that is a pure luxury. An SVG
+        // filter over a subtree that is rotating every frame forces the
+        // rasteriser to rebuild it each frame, and on a phone that alone can
+        // cost more than the rest of the sprite work combined. The rotation
+        // still reads as motion at speed; only the blur is dropped, and only
+        // on mobile. Desktop blur is byte-for-byte unchanged.
+        const blurPx = mobile ? 0 : BLUR_MAX_PX * Math.max(0, (frac - 0.45) / 0.55);
         const blurUser = Math.round((blurPx * userPerPx) / zoom / 0.05) * 0.05;
         const blurAttr = blurUser >= 0.25 ? 'blur(' + blurUser.toFixed(2) + 'px)' : '';
 
@@ -1950,12 +2051,22 @@ export class Lab {
         // Rumble: a running machine is never perfectly still. The period
         // shortens with speed, so idle is dead-still and full speed is a tight
         // buzz rather than a lazy sway.
+        // Both the class and the custom property are compared against what is
+        // already on the element before they are written. `classList.add` on
+        // an element that already carries the class is a no-op to the class
+        // list but still dirties style, and this runs every frame on every
+        // running machine.
         if (omega > OMEGA_RUNNING) {
           const dur = RUMBLE_SLOW - frac * (RUMBLE_SLOW - RUMBLE_FAST);
-          el.style.setProperty('--rumble-dur', dur.toFixed(3) + 's');
-          el.classList.add('rumble');
-        } else {
+          const durTxt = dur.toFixed(3) + 's';
+          if (d._rumbleDur !== durTxt) {
+            el.style.setProperty('--rumble-dur', durTxt);
+            d._rumbleDur = durTxt;
+          }
+          if (!d._rumbling) { el.classList.add('rumble'); d._rumbling = true; }
+        } else if (d._rumbling) {
           el.classList.remove('rumble');
+          d._rumbling = false;
         }
       }
 
@@ -1966,18 +2077,30 @@ export class Lab {
         const span = th.Tmax - th.Tamb;
         const heat = span > 0 ? Math.max(0, Math.min(1, (th.T - th.Tamb) / span)) : 0;
         if (heat > 0.04) {
-          el.style.setProperty('--heat', heat.toFixed(3));
-          el.classList.add('hot');
-        } else {
+          const h = heat.toFixed(3);
+          if (d._heat !== h) { el.style.setProperty('--heat', h); d._heat = h; }
+          if (!d._hot) { el.classList.add('hot'); d._hot = true; }
+        } else if (d._hot) {
           el.classList.remove('hot');
+          d._hot = false;
         }
       }
 
       // Flash any reading the model flagged as an overload, the way a real
       // meter blinks its OL indicator.
-      el.querySelectorAll('[data-live]').forEach((node) => {
-        const r = byName.get(node.getAttribute('data-live') as string);
-        (node as Element).classList.toggle('live-warn', !!(r && r.warn));
+      //
+      // Reuses the cached node list from the value pass above. This used to
+      // re-query `[data-live]` a second time on the same device, so every
+      // sprite was walked twice per frame for the same set of nodes. The
+      // class is also compared before it is toggled — `toggle` with a force
+      // flag still dirties style when the state is unchanged, and an
+      // overload flag is false on almost every frame.
+      d._live.forEach((node) => {
+        const r = byName
+          ? byName.get(node.getAttribute('data-live') as string)
+          : findReadout(ros, node.getAttribute('data-live') as string);
+        const warn = !!(r && r.warn);
+        if (node.classList.contains('live-warn') !== warn) node.classList.toggle('live-warn', warn);
       });
     });
   }
@@ -1985,6 +2108,154 @@ export class Lab {
   /* ═════════════ meters panel ═════════════ */
 
   _renderMeters(): void {
+    // Two paths, one API. Callers do not know or care which runs; they call
+    // this and get a correct panel. See `_renderMetersMobile` for why the
+    // mobile path cannot simply be the desktop one with fewer effects.
+    if (isMobileView()) { this._renderMetersMobile(); return; }
+    this._renderMetersDesktop();
+  }
+
+  /**
+   * Meter panel — mobile path.
+   *
+   * The desktop path below rebuilds the whole sidebar with `innerHTML` on
+   * every frame and then hands the result to `refreshIcons()`. That is
+   * affordable on a desktop; on a phone it is the single largest cost in the
+   * app, because it does three expensive things per frame:
+   *
+   *   1. Parses and constructs every card, row and value node from scratch.
+   *   2. Runs `refreshIcons()`, which scans the ENTIRE document for
+   *      `[data-lucide]` placeholders and rebuilds each one into a new SVG.
+   *   3. Forces a synchronous layout — `_syncMeterOverflow` reads
+   *      `scrollHeight` — immediately after that write, so the browser cannot
+   *      batch the reflow and must flush it inside the frame.
+   *
+   * A live readout changes VALUES every frame. It almost never changes
+   * STRUCTURE. So this path builds the panel once and then writes only
+   * `textContent` into nodes it already holds:
+   *
+   *   · rebuilt only when the panel's SHAPE changes — a device added or
+   *     removed, a dead flag flipping, or a display swapping its binding list
+   *     (V → A replaces three rows with one)
+   *   · value and unit writes are compared first, so a steady reading writes
+   *     nothing at all
+   *   · the overflow check is deferred to the next frame, off the write path
+   *
+   * The readouts themselves are identical. Every value here comes from the
+   * same `sim.readoutsFor()` snapshot the desktop path reads.
+   */
+  private _renderMetersMobile(): void {
+    if (!this.devices.length) {
+      // Only tear down when there is actually something to tear down, so an
+      // empty bench does not rewrite its placeholder every frame.
+      if (this._meterSig !== '') {
+        this._meterSig = '';
+        this._meterCards.clear();
+        this.meterList.innerHTML = '<p class="meter-empty">No devices on the bench yet.</p>';
+        this._scheduleMeterOverflow();
+      }
+      return;
+    }
+
+    // ── Shape signature ──────────────────────────────────────────
+    // Device ids, each device's dead flag, and the NAMES of the readouts it
+    // exposes. Deliberately excludes the values — a number ticking over is
+    // exactly the case that must NOT rebuild the panel.
+    const rosPerDevice: Readout[][] = [];
+    let sig = '';
+    this.devices.forEach((d) => {
+      const ros = this.sim.readoutsFor(d.id);
+      rosPerDevice.push(ros);
+      const th = (d.model as Device & { thermal?: { dead: boolean } }).thermal;
+      sig += d.id + (th && th.dead ? '!' : '') + ':' + ros.map((r) => r.name).join(',') + ';';
+    });
+
+    if (sig !== this._meterSig) {
+      this._meterSig = sig;
+      this._meterCards.clear();
+
+      let html = '';
+      this.devices.forEach((d, i) => {
+        const reg = EQUIPMENT[d.kind];
+        const ros = rosPerDevice[i];
+        const th = (d.model as Device & { thermal?: { dead: boolean } }).thermal;
+        const dead = !!(th && th.dead);
+        const dotColor = dead ? 'var(--red)' : (reg.color || 'var(--green)');
+
+        html += '<div class="meter-card' + (dead ? ' dead' : '') + '">';
+        html += '<div class="meter-card-head"><span class="mc-dot" style="background:' + dotColor + '"></span>' +
+          reg.label + ' \u00b7 ' + reg.model +
+          '<button class="mc-del" data-del="' + d.id + '" title="remove">' +
+          '<i data-lucide="x" class="lucide-icon xs"></i></button></div>';
+        html += '<div class="meter-card-body">';
+
+        if (!ros.length) html += '<div class="meter-row"><span class="mr-k">no readouts</span></div>';
+        ros.forEach((r) => {
+          const key = d.id + '|' + r.name;
+          html += '<div class="meter-row"><span class="mr-k">' + (r.label || r.name) + '</span>';
+          html += '<span class="mr-val-group"><span class="mr-v" data-ro="' + key + '"></span>' +
+            '<span class="mr-u" data-ro-u="' + key + '"></span></span></div>';
+        });
+
+        html += '</div></div>';
+      });
+
+      this.meterList.innerHTML = html;
+      refreshIcons();
+
+      // Cache the value and unit nodes per readout key, so the per-frame pass
+      // below never touches the DOM tree in any way but a `textContent` write.
+      this.meterList.querySelectorAll('[data-ro]').forEach((n) => {
+        const k = n.getAttribute('data-ro') as string;
+        const e = this._meterCards.get(k) || { value: null, unit: null };
+        e.value = n as HTMLElement;
+        this._meterCards.set(k, e);
+      });
+      this.meterList.querySelectorAll('[data-ro-u]').forEach((n) => {
+        const k = n.getAttribute('data-ro-u') as string;
+        const e = this._meterCards.get(k) || { value: null, unit: null };
+        e.unit = n as HTMLElement;
+        this._meterCards.set(k, e);
+      });
+
+      this._scheduleMeterOverflow();
+    }
+
+    // ── Values only ──────────────────────────────────────────────
+    // No innerHTML, no refreshIcons, no layout read. A write happens only
+    // when the rendered string actually differs from what is on screen, so an
+    // unchanged reading costs one string compare and nothing else.
+    this.devices.forEach((d, i) => {
+      const ros = rosPerDevice[i];
+      for (const r of ros) {
+        const e = this._meterCards.get(d.id + '|' + r.name);
+        if (!e) continue;
+
+        if (e.value) {
+          const v = typeof r.value === 'number' ? formatReading(r.value) : r.value;
+          const t = String(v);
+          if (e.value.textContent !== t) e.value.textContent = t;
+          const warn = !!r.warn;
+          // `classList.toggle` with a force flag still dirties style when the
+          // state is unchanged, so the current state is checked first.
+          if (e.value.classList.contains('warn') !== warn) e.value.classList.toggle('warn', warn);
+        }
+
+        if (e.unit) {
+          const u = r.unit || '';
+          if (e.unit.textContent !== u) e.unit.textContent = u;
+        }
+      }
+    });
+  }
+
+  /**
+   * Meter panel — desktop path. Unchanged.
+   *
+   * Full rebuild per frame. Kept exactly as it was so the desktop presentation
+   * and its timing are byte-for-byte the same as before the mobile work.
+   */
+  private _renderMetersDesktop(): void {
     if (!this.devices.length) {
       this.meterList.innerHTML = '<p class="meter-empty">No devices on the bench yet.</p>';
       this._syncMeterOverflow();
@@ -2020,6 +2291,25 @@ export class Lab {
     this.meterList.innerHTML = html;
     refreshIcons();
     this._syncMeterOverflow();
+  }
+
+  /**
+   * Run the overflow check on the NEXT frame rather than inside this one.
+   *
+   * Reading `scrollHeight` forces the browser to flush any pending layout,
+   * which means the `innerHTML` write above it can never be batched with the
+   * rest of the frame. Deferring by one frame lets the write settle first, and
+   * the collapse guard means at most one check is queued however many times
+   * this is called. Mobile only — the desktop path calls `_syncMeterOverflow`
+   * directly, exactly as before.
+   */
+  private _scheduleMeterOverflow(): void {
+    if (this._overflowSoon) return;
+    this._overflowSoon = true;
+    requestAnimationFrame(() => {
+      this._overflowSoon = false;
+      this._syncMeterOverflow();
+    });
   }
 
   /**

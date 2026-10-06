@@ -1,8 +1,17 @@
 /**
  * M-R/CV · Single-phase asynchronous motor.
  *
- * Terminals: Aux2 · Z2 · C · C2 · Run · U2 · PE
- * Main winding (Run-U2) plus an auxiliary winding with run capacitor.
+ * Terminals: Z1 · Z2 · C · C2 · U1 · U2 · PE
+ * Main winding (U1-U2) plus an auxiliary winding (Z1-Z2) with run capacitor.
+ *
+ * These names MUST match the layout. They did not: the panel was renamed to
+ * the real nameplate designations (Z1/Z2 aux, U1/U2 main) and the model was
+ * left reading the old 'Aux2' / 'Run'. Because `terminalsOf()` builds the
+ * terminal set from the layout, `netOf('Run')` and `netOf('Aux2')` returned
+ * undefined forever, `stampNorton`/`stampConductance` silently no-op on an
+ * undefined net, and neither winding was ever stamped into the matrix. Every
+ * 1-phase bench - including the shipped Exp 05 preset - sat at 0 rpm with no
+ * error shown anywhere.
  */
 
 import { Thermal } from '../../engine/thermal.js';
@@ -65,8 +74,8 @@ export class Motor1P implements Machine {
 
   readonly thermal = new Thermal({ C: 900, Rth: 2, Tmax: 130, Tburn: 250 });
 
-  readonly mainPair: [string, string] = ['Run', 'U2'];
-  readonly auxPair: [string, string] = ['Aux2', 'Z2'];
+  readonly mainPair: [string, string] = ['U1', 'U2'];
+  readonly auxPair: [string, string] = ['Z1', 'Z2'];
 
   constructor(opts: Motor1POptions = {}) {
     this.id = opts.id ?? uid('m1');
@@ -142,7 +151,22 @@ export class Motor1P implements Machine {
       // is weaker and its breakdown slip sits a little higher, so sb = 0.25.
       // See motor-3p/model.ts for why the old `I^2/s` form was wrong.
       const sb = 0.25;
-      const Tb = 2.0 * this.Irated;
+      // Breakdown torque scales with the SQUARE of the air-gap flux, and the
+      // flux is set by the voltage actually standing across the main winding.
+      //
+      // Sizing Tb off `Irated` alone made it a constructor constant, so Te
+      // depended only on slip: the machine settled at the same speed at 80 V
+      // as at 230 V, and turning the variac down did nothing. Real torque is
+      // T proportional to flux^2, so an 80 V supply gives (80/230)^2 = 12% of
+      // the torque and a visibly larger slip.
+      //
+      // The flux is MEASURED, not assumed: if the main winding is floating
+      // (a broken return path leaves only the voltmeter's megohm across it),
+      // Vmain collapses and the machine correctly develops no torque instead
+      // of spinning on a constant that does not know it is disconnected.
+      const Vmain = Math.abs(netDiff(sol, this.id, this.mainPair[0], this.mainPair[1]));
+      const flux = Math.min(1.2, Vmain / this.Vrated);
+      const Tb = 2.0 * this.Irated * flux * flux;
       const sAbs = Math.max(1e-3, Math.abs(this.slip));
       const ratio = sAbs / sb + sb / sAbs;
       const Tmag = (2 * Tb) / ratio;

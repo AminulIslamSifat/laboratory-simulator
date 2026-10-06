@@ -107,6 +107,22 @@ export class MeterRack implements Device {
   noise: number;
   shunt = 0.01;
 
+  /**
+   * The pass-through columns: each pair is one line brought out twice on the
+   * terminal block, row-1 post above and row-3 post below, with the ammeter's
+   * shunt between them. L1/L2/L3 are three SEPARATE lines - these pairs are
+   * vertical links, never a bond across lines.
+   *
+   * The 'b' entries are AZ-VIPS #2's mirrored bank on row 1, bay 4.
+   */
+  readonly columns: Array<[string, string]> = [
+    ['L1', 'R'], ['L2', 'D2'], ['L3', 'C'],
+    ['L1b', 'Rb'], ['L2b', 'D2b'], ['L3b', 'Cb']
+  ];
+
+  /** Line current, summed over the columns. This IS the rack's ammeter. */
+  colI = 0;
+
   constructor(opts: MeterRackOptions = {}) {
     this.id = opts.id ?? uid('rack');
     this.label = opts.label ?? 'Measurement Rack AZ-VIPS/VIDC';
@@ -216,6 +232,10 @@ export class MeterRack implements Device {
     // the shunt to nothing and read zero amps forever.
     B.push(['AA-', 'AA-2']);
     B.push(['DIN1-', 'DIN2-']);
+
+    // The L1/R, L2/D2 and L3/C pass-through columns are NOT bonded. Each is
+    // a terminal block with the ammeter's shunt between its two posts, so the
+    // link is a resistance stamped in `stamp()` - see the column block there.
 
     this.VRange = opts.VRange ?? 500;
     this.ARange = opts.ARange ?? 20;
@@ -373,6 +393,28 @@ export class MeterRack implements Device {
         put(resolve(c.pos), resolve(c.neg), 1 / 1e6);
       }
     }
+
+    // ── AZ-VIPS pass-through columns ──
+    // Row 1 (L1 L2 L3) and row 3 (R D2 C) are the same three lines brought
+    // out twice on a terminal block, with the ammeter's shunt between the two
+    // posts of each column. Wire the supply to the top post and the load to
+    // the bottom one, and the line current flows through the shunt.
+    //
+    // Stamped as 1/shunt - a resistance - NOT as a netlist bond. A bond would
+    // make L1 and R one node: current would pass, but the meter would have no
+    // drop to read. A shorted ammeter is a blind one.
+    //
+    // L1/L2/L3 are three SEPARATE lines. They are never bonded to each other
+    // - only each column's own top/bottom pair is linked, and only by this
+    // shunt.
+    const wired = (name: string): number | undefined => {
+      const n = netOf(this.id, name);
+      if (n === undefined || n === null) return undefined;
+      return (sizes.get(n) ?? 0) > 1 ? n : undefined;
+    };
+    for (const [top, bottom] of this.columns) {
+      put(wired(top), wired(bottom), 1 / this.shunt);
+    }
   }
 
   update(_dt: number, sol: Solution): void {
@@ -448,8 +490,27 @@ export class MeterRack implements Device {
         : Math.abs(c.W) > this.WRange * 1.2;
     }
 
+    // The rack's ONE ammeter movement lives in the pass-through columns, not
+    // in any channel. Each column carries the line current through its shunt,
+    // so the drop between its two posts divided by the shunt IS that current.
+    // Normally only one line is loaded and the rest read zero, so the sum is
+    // the line current.
+    //
+    // This used to be `this.channels[0].I` - the AZ-VIPS display's own
+    // current. But a three-line display is a voltmeter and hard-codes I = 0,
+    // so the rack's ammeter read 0 A on every bench no matter what was wired
+    // through it.
+    let colI = 0;
+    for (const [top, bottom] of this.columns) {
+      const a = this.resolve(sol, [top], sizes);
+      const b = this.resolve(sol, [bottom], sizes);
+      if (a === undefined || b === undefined || a === b) continue;
+      colI += ((sol.V[a] ?? 0) - (sol.V[b] ?? 0)) / this.shunt;
+    }
+    this.colI = colI + sol.rng.gauss() * Math.abs(colI) * this.noise;
+
     this.V = this.channels[0]?.V ?? 0;
-    this.A = this.channels[0]?.I ?? 0;
+    this.A = this.colI;
     this.W = this.V * this.A;
     this.aOver = Math.abs(this.A) > this.ARange * 1.2;
     this.vOver = Math.abs(this.V) > this.VRange * 1.2;

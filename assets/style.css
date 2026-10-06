@@ -1812,3 +1812,83 @@ button, .pal-item, .term, .device { -webkit-tap-highlight-color: transparent; }
   border-radius: 4px;
   padding: 1px 5px;
 }
+
+/* ══════════════════════════════════════════════════════════════
+   MOBILE PAINT BUDGET (<= 900px)
+   ══════════════════════════════════════════════════════════════
+   Everything below exists to cut RASTERISATION COST on a phone and
+   changes nothing about what the app does. Same DOM, same solver,
+   same numbers — just fewer effects the compositor has to redo
+   sixty times a second.
+
+   Two effects cost disproportionately on a mobile GPU:
+
+     backdrop-filter — re-samples and blurs everything behind the
+       panel. When the thing behind it is the animating bench, that
+       chain re-runs every frame, and at devicePixelRatio 3 it is
+       blurring roughly nine times the pixels a desktop would.
+
+     SVG filter on an animating subtree — a `filter` on a device
+       sprite wraps the rotor, so the rotation invalidates the filter
+       and forces a full re-rasterise of the sprite every frame.
+       Drop-shadow and the thermal tint both do this.
+
+   Both are removed here and replaced with flat equivalents that
+   composite for free. Desktop is untouched: the media query is the
+   same 900px breakpoint the rest of the file already treats as
+   "phone", so a desktop window never enters this block.
+   ══════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+
+  /* ── 1. Kill every backdrop blur ──
+     The panels sit over the animating bench, so their blurred backdrop
+     is stale the instant the next frame renders. The glass look is
+     approximated with a denser opaque gradient, which costs nothing. */
+  .lab-palette,
+  .lab-meters {
+    background: linear-gradient(180deg, rgba(14,19,28,.97) 0%, rgba(10,14,20,.95) 100%);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,.45);
+  }
+
+  /* Overlays: opaque enough that the missing blur is invisible, and they
+     are not on screen while the bench is running anyway. */
+  .kebab-card, .ctx-menu, .toast, .drawer, .drawer-head, .bench-hint,
+  .menu-topbar, .menu-bg, .hub-bar, .roll-pop, .pal-tabs {
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  .kebab-card, .ctx-menu, .drawer, .bench-hint {
+    background: rgba(12,16,24,.97);
+  }
+  .toast { background: rgba(12,16,24,.97); }
+
+  /* ── 2. Drop the drop-shadow on device sprites ──
+     A `filter` on .device wraps the whole sprite including the rotor,
+     so it re-rasterises whenever anything inside moves. The shadows are
+     replaced with a border-radius box-shadow on the selected sprite
+     only, which the compositor can handle on its own. */
+  .device {
+    filter: none;
+    /* The filter transition has nothing left to animate. */
+    transition: transform .15s ease;
+  }
+  .device.sel {
+    filter: none;
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px var(--accent-mid), 0 0 16px var(--accent-glow);
+  }
+
+  /* ── 3. Thermal tint: drop the SVG filter ──
+     This is the one deliberate visual loss. The tint is a `filter` on the
+     svg, which re-rasterises the entire sprite every time --heat moves —
+     and it moves continuously while a machine warms. The stylesheet
+     already flags it as the one rule that exists to be removable, so on
+     mobile it is: overheating is still unmistakable, because smoke, the
+     dead shake and the blinking OL readouts all remain. */
+  .device.hot > svg { filter: none; }
+
+  /* ── 4. Keep what is already cheap ──
+     The rumble and dead-shake are transform animations on the inner svg,
+     which the compositor handles without a repaint. They are NOT gated —
+     a bench that runs but does not move would be the wrong trade. */
+}

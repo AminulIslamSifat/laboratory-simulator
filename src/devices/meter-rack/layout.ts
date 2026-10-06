@@ -66,11 +66,13 @@ export const meterRack: EquipmentEntry = {
       { d: "d1", m: "V", x: 112, y: 105 },       { d: "d1", m: "A", x: 126.1, y: 105 },       { d: "d1", m: "W", x: 140.1, y: 105 },
       // AZ-VIPS #2 - wells ref 739/769/799, row ref y210
       { d: "d2b", m: "V", x: 346.3, y: 98.4 },       { d: "d2b", m: "A", x: 360.4, y: 98.4 },       { d: "d2b", m: "W", x: 374.4, y: 98.4 },
-      // DIN bay, LEFT meter - reads the DIN-1 pair. Wells ref 247/269/291.
-      { d: "d2", m: "V", x: 115.7, y: 179.1 },       { d: "d2", m: "A", x: 126.1, y: 179.1 },       { d: "d2", m: "W", x: 136.4, y: 179.1 },
-      // DIN bay, RIGHT meter - reads the DIN-2 pair. Wells ref 333/355/377.
-      // This is the one the field ammeter lands on.
-      { d: "d3", m: "V", x: 156.1, y: 179.1 },       { d: "d3", m: "A", x: 166.4, y: 179.1 },       { d: "d3", m: "W", x: 176.7, y: 179.1 }
+      // Row 2: each trio lands on its OWN face's painted button wells, so
+      // the switch sits under the monitor it actually drives. The AA bay's
+      // face is ref x 78..158 (wells 95/117/139); the DIN bay's is ref
+      // x 230..310 (wells 247/269/291).
+      { d: "d2", m: "V", x: 44.5,  y: 179.1 },       { d: "d2", m: "A", x: 54.8,  y: 179.1 },       { d: "d2", m: "W", x: 65.1,  y: 179.1 },
+      // DIN bay face - the one the field ammeter lands on.
+      { d: "d3", m: "V", x: 115.8, y: 179.1 },       { d: "d3", m: "A", x: 126.1, y: 179.1 },       { d: "d3", m: "W", x: 136.4, y: 179.1 }
       // d4 (the AA bay's wattmeter) has no mode switch: a wattmeter is not a
       // multi-mode instrument, and there is nowhere in that bay to put a trio
       // without landing it on the AA+2/AA-2 jacks.
